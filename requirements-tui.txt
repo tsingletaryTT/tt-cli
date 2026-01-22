@@ -1,0 +1,3 @@
+# Optional TUI dependencies
+textual>=0.47.0
+rich>=13.7.0

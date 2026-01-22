@@ -1,0 +1,5 @@
+# Core dependencies: NONE
+# tt-cli uses only Python standard library for maximum portability
+
+# Optional: TUI dependencies
+# Install with: pip install -r requirements-tui.txt
