@@ -337,6 +337,81 @@ print(f"Applied {len(fixes)} fixes")
 - `fix_environment()` - Auto-fix common issues
 - `get_venv_python_version()` - Get Python version from venv
 
+### Firmware Management
+
+Always use `tt.utils.firmware` module:
+
+```python
+from tt.utils import firmware
+
+# Get current firmware versions
+current = firmware.get_current_firmware()
+if current:
+    print(f"Primary version: {current['primary_version']}")
+
+# List available firmware from GitHub
+available = firmware.list_available_firmware()
+for fw in available:
+    print(f"{fw['version']} - {fw['date']}")
+
+# Get latest firmware
+latest = firmware.get_latest_firmware()
+print(f"Latest: {latest['version']}")
+
+# Check firmware compatibility
+compat = firmware.get_firmware_compatibility("19.4.2", "P300C")
+if not compat['compatible']:
+    print(f"Warning: {compat['warning']}")
+
+# Get recommended firmware for hardware
+recommended = firmware.get_recommended_firmware("P300C")
+for fw in recommended:
+    print(f"Recommended: {fw['version']}")
+
+# Download firmware
+bundle_path = firmware.download_firmware("19.4.2", show_progress=True)
+print(f"Downloaded: {bundle_path}")
+
+# Flash firmware (requires tt-flash)
+if firmware.has_tt_flash():
+    exit_code = firmware.flash_firmware(bundle_path)
+    if exit_code == 0:
+        print("Flash successful")
+
+# Verify firmware
+exit_code = firmware.verify_firmware(bundle_path)
+```
+
+**Available functions**:
+- `parse_firmware_version(hex)` - Convert hex to semantic version (0x13040200 → "19.4.2.0")
+- `format_firmware_version(str)` - Format for display ("19.4.2.0" → "19.4.2")
+- `get_current_firmware()` - Get firmware from devices via tt-smi
+- `list_available_firmware()` - Fetch releases from GitHub API
+- `get_latest_firmware()` - Get latest release
+- `compare_versions(v1, v2)` - Compare semantic versions (-1/0/1)
+- `get_firmware_compatibility(version, hw_type)` - Check hardware compatibility (advisory)
+- `get_recommended_firmware(hw_type)` - Filter firmware by hardware compatibility
+- `download_firmware(version, cache_dir)` - Download firmware bundle
+- `has_tt_flash()` - Check for tt-flash availability
+- `flash_firmware(bundle_path, ...)` - Flash firmware with tt-flash
+- `verify_firmware(bundle_path)` - Verify firmware with tt-flash
+
+**Compatibility recommendations**:
+```python
+FIRMWARE_RECOMMENDATIONS = {
+    # Blackhole devices (P-series) - recommend 19.4.x+
+    'P100': {'min_version': '19.4.0', 'arch': 'blackhole'},
+    'P150': {'min_version': '19.4.0', 'arch': 'blackhole'},
+    'P300C': {'min_version': '19.4.0', 'arch': 'blackhole'},
+
+    # Wormhole devices (N-series) - recommend 19.x+
+    'N150': {'min_version': '19.0.0', 'arch': 'wormhole'},
+    'N300': {'min_version': '19.0.0', 'arch': 'wormhole'},
+}
+```
+
+**Important**: Recommendations are advisory only. The CLI never blocks firmware operations - it shows warnings but always allows developers to proceed. This respects developer expertise while providing helpful guidance.
+
 ### Error Handling
 
 **Pattern**: Fail gracefully with helpful error messages.
@@ -868,16 +943,27 @@ while True:
 - ✅ Hardware detection (`tt device info`, `tt device test`)
 - ✅ Environment management (`tt env use/list/check/fix`)
 - ✅ Model management (`tt model list/info/check`)
+- ✅ **Firmware management** (`tt firmware list/current/download/flash/verify/latest`) - **NEW**
 - ✅ Status dashboard (`tt status`)
-- ✅ Test suite (64 tests, 100% passing)
+- ✅ Test suite (122 tests, 119 passing, 3 pre-existing failures)
 - ✅ Documentation (COOKBOOK, TESTING, README, CLAUDE)
 
 **Metrics**:
-- 1,500+ lines of Python code
-- 64 tests (100% passing)
+- 2,500+ lines of Python code
+- 122 tests (58 new firmware tests)
 - 0 external dependencies (stdlib only)
-- 4 command categories
-- 12 commands implemented
+- 5 command categories
+- 18 commands implemented
+
+**Recent additions (2026-01-30)**:
+- ✅ Firmware utility module (`tt/utils/firmware.py`) - 650+ lines
+- ✅ Firmware commands (`tt/commands/firmware.py`) - 500+ lines
+- ✅ 42 unit tests for firmware utilities
+- ✅ 16 integration tests for firmware commands
+- ✅ Hardware-aware firmware recommendations (advisory, never blocking)
+- ✅ GitHub API integration for firmware releases
+- ✅ tt-flash wrapper for device flashing
+- ✅ Comprehensive firmware recipes in COOKBOOK.md
 
 ### Phase 2: Advanced Features (🚧 In Progress)
 
@@ -918,16 +1004,21 @@ tt-cli/
 │   │   ├── status.py           # tt status
 │   │   ├── env.py              # tt env *
 │   │   ├── device.py           # tt device *
+│   │   ├── firmware.py         # tt firmware * (NEW)
 │   │   ├── model.py            # tt model *
 │   │   └── serve.py            # tt serve * (Phase 2)
 │   └── utils/
 │       ├── hardware.py         # Hardware detection
+│       ├── firmware.py         # Firmware management (NEW)
 │       └── envmanager.py       # Environment management
 ├── tests/
-│   ├── conftest.py             # Shared fixtures
+│   ├── conftest.py             # Shared fixtures (with firmware fixtures)
 │   ├── unit/                   # Unit tests
+│   │   ├── test_firmware.py    # Firmware unit tests (NEW)
+│   │   └── ...
 │   └── integration/            # Integration tests
-├── COOKBOOK.md                 # Usage recipes
+│       └── test_commands.py    # Includes firmware tests (NEW)
+├── COOKBOOK.md                 # Usage recipes (with firmware recipes)
 ├── TESTING.md                  # Testing guide
 ├── CLAUDE.md                   # This file
 └── README.md                   # User documentation
@@ -951,6 +1042,8 @@ pytest --pdb                    # Debug on failure
 tt status                       # System overview
 tt env use metal                # Switch environment
 tt device test                  # Test devices
+tt firmware current             # Check firmware versions
+tt firmware latest --flash      # Update to latest firmware
 tt model list                   # List models
 ```
 

@@ -7,7 +7,7 @@ import json
 import argparse
 from unittest.mock import Mock, patch
 
-from tt.commands import status, env, device, model
+from tt.commands import status, env, device, model, firmware
 
 
 class TestStatusCommand:
@@ -243,3 +243,348 @@ class TestModelCommands:
 
         assert result == 1
         assert '✗' in out
+
+
+class TestFirmwareCommands:
+    """Test firmware management commands."""
+
+    def test_firmware_list(self, mock_github_api, capsys):
+        """Test firmware list command."""
+        args = argparse.Namespace(json=False, recommended=False)
+
+        # Mock GitHub API
+        from unittest.mock import MagicMock
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(mock_github_api['releases']).encode('utf-8')
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+
+        with patch('urllib.request.urlopen', return_value=mock_response):
+            with patch('tt.utils.hardware.detect_hardware', return_value=None):
+                result = firmware.list_firmware(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 0
+        assert 'Available Firmware Versions' in out
+        assert '19.4.2' in out
+        assert '19.4.1' in out
+
+    def test_firmware_list_with_hardware(self, mock_github_api, mock_hardware_p300c, capsys):
+        """Test firmware list with hardware detection."""
+        args = argparse.Namespace(json=False, recommended=False)
+
+        from unittest.mock import MagicMock
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(mock_github_api['releases']).encode('utf-8')
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+
+        with patch('urllib.request.urlopen', return_value=mock_response):
+            with patch('tt.utils.hardware.detect_hardware', return_value=mock_hardware_p300c):
+                with patch('tt.utils.firmware.get_current_firmware') as mock_current:
+                    mock_current.return_value = {
+                        'devices': [],
+                        'primary_version': '19.4.2',
+                    }
+
+                    result = firmware.list_firmware(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 0
+        assert 'P300C' in out
+        assert 'current' in out
+
+    def test_firmware_list_json(self, mock_github_api, capsys):
+        """Test firmware list with JSON output."""
+        args = argparse.Namespace(json=True, recommended=False)
+
+        from unittest.mock import MagicMock
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(mock_github_api['releases']).encode('utf-8')
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+
+        with patch('urllib.request.urlopen', return_value=mock_response):
+            with patch('tt.utils.hardware.detect_hardware', return_value=None):
+                result = firmware.list_firmware(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 0
+
+        # Parse JSON
+        data = json.loads(out)
+        assert 'firmware_versions' in data
+        assert len(data['firmware_versions']) > 0
+
+    def test_firmware_list_network_error(self, capsys):
+        """Test firmware list with network error."""
+        args = argparse.Namespace(json=False, recommended=False)
+
+        with patch('urllib.request.urlopen', side_effect=Exception("Network error")):
+            result = firmware.list_firmware(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 1
+        assert 'Failed to fetch' in out
+
+    def test_firmware_current(self, mock_hardware_p300c, capsys):
+        """Test firmware current command."""
+        args = argparse.Namespace(json=False)
+
+        with patch('tt.utils.hardware.detect_hardware', return_value=mock_hardware_p300c):
+            result = firmware.current_firmware(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 0
+        assert 'Current Firmware' in out
+        assert '19.4.2' in out
+        assert 'Device 0' in out
+        assert 'Device 1' in out
+
+    def test_firmware_current_no_hardware(self, capsys):
+        """Test firmware current with no hardware."""
+        args = argparse.Namespace(json=False)
+
+        with patch('tt.utils.hardware.detect_hardware', return_value=None):
+            result = firmware.current_firmware(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 1
+        assert 'No hardware detected' in out
+
+    def test_firmware_current_json(self, mock_hardware_p300c, capsys):
+        """Test firmware current with JSON output."""
+        args = argparse.Namespace(json=True)
+
+        with patch('tt.utils.hardware.detect_hardware', return_value=mock_hardware_p300c):
+            result = firmware.current_firmware(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 0
+
+        # Parse JSON
+        data = json.loads(out)
+        assert 'devices' in data
+        assert 'primary_version' in data
+
+    def test_firmware_download(self, mock_github_api, tmp_path, capsys):
+        """Test firmware download command."""
+        args = argparse.Namespace(version='19.4.2', output=None)
+
+        from unittest.mock import MagicMock
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(mock_github_api['releases']).encode('utf-8')
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+
+        with patch('urllib.request.urlopen', return_value=mock_response):
+            with patch('tt.utils.firmware.DEFAULT_CACHE_DIR', tmp_path):
+                with patch('urllib.request.urlretrieve') as mock_retrieve:
+                    # Mock download
+                    def mock_download_func(url, path, reporthook=None):
+                        from pathlib import Path
+                        Path(path).write_text("firmware data")
+
+                    mock_retrieve.side_effect = mock_download_func
+
+                    result = firmware.download(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 0
+        assert 'downloaded' in out.lower()
+
+    def test_firmware_download_invalid_version(self, mock_github_api, tmp_path, capsys):
+        """Test firmware download with invalid version."""
+        args = argparse.Namespace(version='99.99.99', output=None)
+
+        from unittest.mock import MagicMock
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(mock_github_api['releases']).encode('utf-8')
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+
+        with patch('urllib.request.urlopen', return_value=mock_response):
+            with patch('tt.utils.firmware.DEFAULT_CACHE_DIR', tmp_path):
+                result = firmware.download(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 1
+        assert 'not found' in out
+
+    def test_firmware_flash_with_path(self, tmp_path, mock_hardware_p300c, mock_tt_flash_available, capsys):
+        """Test firmware flash with bundle path."""
+        # Create mock bundle
+        bundle_path = tmp_path / "firmware.fwbundle"
+        bundle_path.write_text("firmware data")
+
+        args = argparse.Namespace(
+            version_or_path=str(bundle_path),
+            force=False,
+            no_reset=False,
+            allow_downgrades=False,
+            yes=True,  # Skip confirmation
+        )
+
+        with patch('tt.utils.hardware.detect_hardware', return_value=mock_hardware_p300c):
+            with patch('tt.utils.firmware.get_current_firmware') as mock_current:
+                mock_current.return_value = {
+                    'devices': [],
+                    'primary_version': '19.4.2',
+                }
+
+                with patch('subprocess.run') as mock_run:
+                    mock_run.return_value = Mock(returncode=0)
+
+                    result = firmware.flash(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 0
+        assert 'successfully' in out.lower()
+
+    def test_firmware_flash_with_version(self, tmp_path, mock_github_api, mock_hardware_p300c, mock_tt_flash_available, capsys):
+        """Test firmware flash with version string."""
+        args = argparse.Namespace(
+            version_or_path='19.4.2',
+            force=False,
+            no_reset=False,
+            allow_downgrades=False,
+            yes=True,
+        )
+
+        # Create cached bundle
+        cache_dir = tmp_path / ".tt" / "firmware"
+        cache_dir.mkdir(parents=True)
+        bundle_path = cache_dir / "fw_pack-80.140.41.0.fwbundle"
+        bundle_path.write_text("firmware data")
+
+        from unittest.mock import MagicMock
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(mock_github_api['releases']).encode('utf-8')
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+
+        with patch('urllib.request.urlopen', return_value=mock_response):
+            with patch('tt.utils.firmware.DEFAULT_CACHE_DIR', cache_dir):
+                with patch('tt.utils.hardware.detect_hardware', return_value=mock_hardware_p300c):
+                    with patch('tt.utils.firmware.get_current_firmware') as mock_current:
+                        mock_current.return_value = {
+                            'devices': [],
+                            'primary_version': '19.4.1',
+                        }
+
+                        with patch('subprocess.run') as mock_run:
+                            mock_run.return_value = Mock(returncode=0)
+
+                            result = firmware.flash(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 0
+        assert 'successfully' in out.lower()
+
+    def test_firmware_flash_no_tt_flash(self, tmp_path, mock_tt_flash_unavailable, capsys):
+        """Test firmware flash without tt-flash."""
+        bundle_path = tmp_path / "firmware.fwbundle"
+        bundle_path.write_text("firmware data")
+
+        args = argparse.Namespace(
+            version_or_path=str(bundle_path),
+            force=False,
+            no_reset=False,
+            allow_downgrades=False,
+            yes=True,
+        )
+
+        with patch('tt.utils.hardware.detect_hardware', return_value=None):
+            result = firmware.flash(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 1
+        assert 'tt-flash' in out
+
+    def test_firmware_verify(self, tmp_path, mock_tt_flash_available, capsys):
+        """Test firmware verify command."""
+        bundle_path = tmp_path / "firmware.fwbundle"
+        bundle_path.write_text("firmware data")
+
+        args = argparse.Namespace(version_or_path=str(bundle_path))
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = Mock(returncode=0)
+
+            result = firmware.verify(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 0
+        assert 'passed' in out.lower()
+
+    def test_firmware_verify_no_bundle(self, mock_tt_flash_available, capsys):
+        """Test firmware verify without bundle (verify current)."""
+        args = argparse.Namespace(version_or_path=None)
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = Mock(returncode=0)
+
+            result = firmware.verify(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 0
+        assert 'passed' in out.lower()
+
+    def test_firmware_latest(self, mock_github_api, capsys):
+        """Test firmware latest command."""
+        args = argparse.Namespace(download=False, flash=False, recommended=False, yes=False)
+
+        from unittest.mock import MagicMock
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(mock_github_api['releases']).encode('utf-8')
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+
+        with patch('urllib.request.urlopen', return_value=mock_response):
+            with patch('tt.utils.hardware.detect_hardware', return_value=None):
+                result = firmware.latest(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 0
+        assert 'Latest Firmware' in out
+        assert '19.4.2' in out
+
+    def test_firmware_latest_with_current(self, mock_github_api, mock_hardware_p300c, capsys):
+        """Test firmware latest with current firmware."""
+        args = argparse.Namespace(download=False, flash=False, recommended=False, yes=False)
+
+        from unittest.mock import MagicMock
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(mock_github_api['releases']).encode('utf-8')
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+
+        with patch('urllib.request.urlopen', return_value=mock_response):
+            with patch('tt.utils.hardware.detect_hardware', return_value=mock_hardware_p300c):
+                with patch('tt.utils.firmware.get_current_firmware') as mock_current:
+                    mock_current.return_value = {
+                        'devices': [],
+                        'primary_version': '19.4.2',
+                    }
+
+                    result = firmware.latest(args)
+
+        out, err = capsys.readouterr()
+
+        assert result == 0
+        assert 'up to date' in out.lower()

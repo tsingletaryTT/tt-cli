@@ -1592,6 +1592,160 @@ tt serve start Qwen3-0.6B --port 8001 --detach
 
 ---
 
+## Firmware Management Recipes
+
+### Recipe: Checking Current Firmware Version
+
+**Use case**: Verify firmware version on your devices before debugging issues.
+
+```bash
+# Show current firmware for all devices
+tt firmware current
+
+# Example output:
+# Current Firmware:
+# Device 0: 19.4.2 (0x13040200)
+# Device 1: 19.4.2 (0x13040200)
+# ✓ Firmware is recommended for P300C hardware
+
+# Get firmware info as JSON (for scripts)
+tt firmware current --json
+```
+
+**Why**: Firmware version affects hardware behavior. Checking it first can save debugging time.
+
+---
+
+### Recipe: Listing Available Firmware Versions
+
+**Use case**: See what firmware versions are available for download.
+
+```bash
+# List all available firmware versions
+tt firmware list
+
+# Example output:
+# Available Firmware Versions (for P300C):
+# ✓ 19.4.2 (current, recommended) - Released 2026-01-05
+# ⭐ 19.4.1 (recommended)          - Released 2025-12-19
+# ⭐ 19.4.0 (recommended)          - Released 2025-12-16
+# • 19.3.1                        - Released 2025-12-05
+
+# Show only versions recommended for your hardware
+tt firmware list --recommended
+
+# Get as JSON
+tt firmware list --json
+```
+
+**Legend**:
+- ✓ = Current version installed
+- ⭐ = Recommended for your hardware
+- • = Available but not recommended
+
+**Why**: Helps you choose the right firmware version for your hardware.
+
+---
+
+### Recipe: Updating to Latest Firmware
+
+**Use case**: You want to update to the newest available firmware.
+
+```bash
+# Check what the latest version is
+tt firmware latest
+
+# Example output:
+# Hardware: P300C (Blackhole)
+# Latest Firmware: 19.4.2 (released 2026-01-05)
+# Current Firmware: 19.4.1
+# ⬆ Update available: 19.4.1 → 19.4.2
+# ✓ Latest firmware is recommended for your hardware
+
+# Download and flash latest (with confirmation)
+tt firmware latest --flash
+
+# Skip confirmation prompt (for automation)
+tt firmware latest --flash --yes
+```
+
+**Recommended workflow**:
+1. Check current: `tt firmware current`
+2. Check latest: `tt firmware latest`
+3. Update if needed: `tt firmware latest --flash`
+
+**Why**: Staying up-to-date ensures you have latest fixes and features.
+
+---
+
+### Recipe: Flashing Firmware with Compatibility Checks
+
+**Use case**: Install specific firmware version to devices.
+
+```bash
+# Flash firmware by version (downloads if needed)
+tt firmware flash 19.4.2
+
+# Example output:
+# Hardware detected: P300C
+# Target firmware: 19.4.2
+# Current firmware: 19.4.1
+# This will flash firmware to all devices. Continue? [y/N]: y
+# Flashing firmware: ~/.tt/firmware/fw_pack-80.140.41.0.fwbundle
+# ✓ Firmware flashed successfully
+
+# Flash from local bundle file
+tt firmware flash /path/to/firmware.fwbundle
+
+# Skip confirmation (for automation/CI)
+tt firmware flash 19.4.2 --yes
+```
+
+**Important**: The CLI detects your hardware and shows compatibility warnings but **never blocks** the operation. You always have full control.
+
+**Why**: Hardware-aware recommendations help avoid common issues while respecting developer expertise.
+
+---
+
+### Recipe: Flashing Firmware in Automation/CI
+
+**Use case**: Automated firmware updates in CI pipelines without human interaction.
+
+```bash
+#!/bin/bash
+# CI firmware update script
+
+# Check current firmware
+CURRENT=$(tt firmware current --json | jq -r '.primary_version')
+
+# Check latest recommended
+tt firmware latest --recommended
+LATEST=$(tt firmware latest --json | jq -r '.version')
+
+# Update if needed (skip all prompts)
+if [ "$CURRENT" != "$LATEST" ]; then
+    echo "Updating firmware from $CURRENT to $LATEST..."
+    tt firmware flash $LATEST --yes || exit 1
+else
+    echo "Firmware up to date: $CURRENT"
+fi
+
+# Verify installation
+tt firmware verify || exit 1
+
+# Test devices
+tt device test || exit 1
+```
+
+**Key flags for automation**:
+- `--yes`: Skip confirmation prompts
+- `--json`: Machine-readable output
+- `--recommended`: Show only compatible versions
+
+**Why**: Enables automated firmware management in CI/CD pipelines.
+
+---
+
 ## Best Practices
 
 ### 1. Always Check Status First
@@ -1652,6 +1806,15 @@ Installing `uv` provides 10-100x faster environment operations with zero downsid
 | Activate tt-metal | `eval "$(tt env use metal)"` |
 | Activate TT-Forge | `eval "$(tt env use forge)"` |
 | List environments | `tt env list` |
+| **Firmware** | |
+| Current firmware | `tt firmware current` |
+| List available | `tt firmware list` |
+| List recommended | `tt firmware list --recommended` |
+| Latest version | `tt firmware latest` |
+| Download firmware | `tt firmware download <version>` |
+| Flash firmware | `tt firmware flash <version>` |
+| Flash (no prompts) | `tt firmware flash <version> --yes` |
+| Verify firmware | `tt firmware verify` |
 | **Workflows** | |
 | List workflows | `tt workflow list` |
 | Workflow details | `tt workflow info <name>` |

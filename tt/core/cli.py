@@ -9,7 +9,7 @@ import argparse
 from pathlib import Path
 
 # Import command handlers
-from tt.commands import serve, env, device, status, model, workflow, config
+from tt.commands import serve, env, device, firmware, status, model, workflow, config
 
 
 def create_parser():
@@ -268,6 +268,135 @@ def create_parser():
         help='Clear device state and shared memory',
     )
     clear_parser.set_defaults(func=device.clear)
+
+    # ========================================================================
+    # tt firmware - Firmware management
+    # ========================================================================
+    firmware_parser = subparsers.add_parser(
+        'firmware',
+        help='Manage device firmware',
+    )
+    firmware_subparsers = firmware_parser.add_subparsers(
+        dest='firmware_command',
+        help='Firmware commands',
+        required=True,
+    )
+
+    # tt firmware list
+    list_fw_parser = firmware_subparsers.add_parser(
+        'list',
+        help='List available firmware versions',
+    )
+    list_fw_parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output as JSON',
+    )
+    list_fw_parser.add_argument(
+        '--recommended',
+        action='store_true',
+        help='Show only recommended versions for detected hardware',
+    )
+    list_fw_parser.set_defaults(func=firmware.list_firmware)
+
+    # tt firmware current
+    current_fw_parser = firmware_subparsers.add_parser(
+        'current',
+        help='Show current firmware version',
+    )
+    current_fw_parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output as JSON',
+    )
+    current_fw_parser.set_defaults(func=firmware.current_firmware)
+
+    # tt firmware download
+    download_fw_parser = firmware_subparsers.add_parser(
+        'download',
+        help='Download firmware bundle',
+    )
+    download_fw_parser.add_argument(
+        'version',
+        help='Firmware version (e.g., 19.4.2 or v19.4.2)',
+    )
+    download_fw_parser.add_argument(
+        '--output',
+        help='Output path (default: ~/.tt/firmware/)',
+    )
+    download_fw_parser.set_defaults(func=firmware.download)
+
+    # tt firmware flash
+    flash_fw_parser = firmware_subparsers.add_parser(
+        'flash',
+        help='Flash firmware to devices',
+    )
+    flash_fw_parser.add_argument(
+        'version_or_path',
+        help='Firmware version or path to .fwbundle file',
+    )
+    flash_fw_parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Force update ROM',
+    )
+    flash_fw_parser.add_argument(
+        '--no-reset',
+        action='store_true',
+        dest='no_reset',
+        help='Do not reset devices after flash',
+    )
+    flash_fw_parser.add_argument(
+        '--allow-downgrades',
+        action='store_true',
+        dest='allow_downgrades',
+        help='Allow major version downgrades',
+    )
+    flash_fw_parser.add_argument(
+        '--yes',
+        action='store_true',
+        help='Skip confirmation prompt',
+    )
+    flash_fw_parser.set_defaults(func=firmware.flash)
+
+    # tt firmware verify
+    verify_fw_parser = firmware_subparsers.add_parser(
+        'verify',
+        help='Verify firmware',
+    )
+    verify_fw_parser.add_argument(
+        'version_or_path',
+        nargs='?',
+        help='Firmware version or path (optional)',
+    )
+    verify_fw_parser.set_defaults(func=firmware.verify)
+
+    # tt firmware latest
+    latest_fw_parser = firmware_subparsers.add_parser(
+        'latest',
+        help='Show latest firmware version',
+    )
+    latest_fw_parser.add_argument(
+        '--download',
+        action='store_true',
+        help='Download latest firmware',
+    )
+    latest_fw_parser.add_argument(
+        '--flash',
+        action='store_true',
+        help='Download and flash latest firmware',
+    )
+    latest_fw_parser.add_argument(
+        '--recommended',
+        action='store_true',
+        help='Show latest recommended for detected hardware',
+    )
+    latest_fw_parser.add_argument(
+        '--yes',
+        action='store_true',
+        help='Skip confirmation prompt',
+    )
+    latest_fw_parser.set_defaults(func=firmware.latest)
 
     # ========================================================================
     # tt model - Model management

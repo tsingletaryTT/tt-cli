@@ -394,6 +394,67 @@ tt device info --json         # JSON output
 tt device test                # Test TTNN device connectivity
 ```
 
+### Firmware Management
+```bash
+# Check current firmware
+tt firmware current                       # Show firmware on all devices
+tt firmware current --json                # JSON output
+
+# List available firmware
+tt firmware list                          # List all available versions
+tt firmware list --recommended            # Show only recommended for your hardware
+tt firmware list --json                   # JSON output
+
+# Show latest firmware
+tt firmware latest                        # Show latest available version
+tt firmware latest --recommended          # Show latest recommended for hardware
+
+# Download firmware
+tt firmware download 19.4.2               # Download specific version
+tt firmware download 19.4.2 --output /path/to/file  # Custom location
+
+# Flash firmware
+tt firmware flash 19.4.2                  # Flash firmware (with confirmation)
+tt firmware flash 19.4.2 --yes            # Skip confirmation (for automation)
+tt firmware flash /path/to/bundle.fwbundle  # Flash from local file
+tt firmware flash 19.4.2 --force          # Force ROM update
+tt firmware flash 19.4.2 --no-reset       # Don't reset after flash
+tt firmware flash 19.4.2 --allow-downgrades  # Allow major version downgrades
+
+# Verify firmware
+tt firmware verify                        # Verify current firmware
+tt firmware verify 19.4.2                 # Verify against specific version
+
+# Update to latest (one command)
+tt firmware latest --flash                # Download and flash latest
+tt firmware latest --flash --yes          # Skip all prompts (for CI)
+tt firmware latest --flash --recommended  # Use latest recommended for hardware
+```
+
+**Hardware-aware recommendations**: The CLI detects your hardware and provides firmware compatibility recommendations:
+- **Blackhole** (P100/P150/P300C): Recommends 19.4.0+ for optimal support
+- **Wormhole** (N150/N300): Recommends 19.0.0+ for compatibility
+
+**Important**: Recommendations are advisory only. The CLI never blocks firmware operations - you always have full control. Warnings are shown to help you make informed decisions.
+
+**Example workflow**:
+```bash
+# 1. Check current firmware
+tt firmware current
+
+# 2. See what's available
+tt firmware list --recommended
+
+# 3. Update to latest recommended
+tt firmware latest --flash --recommended
+
+# 4. Verify installation
+tt firmware verify
+
+# 5. Test devices
+tt device test
+```
+
 ### Model Management
 ```bash
 tt model get <repo>           # Download model from HuggingFace

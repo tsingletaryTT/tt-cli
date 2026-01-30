@@ -204,3 +204,112 @@ def capture_output(capsys):
         captured = capsys.readouterr()
         return captured.out, captured.err
     return _capture
+
+
+@pytest.fixture
+def mock_github_api():
+    """Mock GitHub API responses for firmware releases."""
+    releases = [
+        {
+            'tag_name': 'v19.4.2',
+            'published_at': '2026-01-05T12:34:56Z',
+            'assets': [
+                {
+                    'name': 'fw_pack-80.140.41.0.fwbundle',
+                    'browser_download_url': 'https://github.com/tenstorrent/tt-firmware/releases/download/v19.4.2/fw_pack-80.140.41.0.fwbundle',
+                },
+            ],
+        },
+        {
+            'tag_name': 'v19.4.1',
+            'published_at': '2025-12-19T10:20:30Z',
+            'assets': [
+                {
+                    'name': 'fw_pack-80.140.40.0.fwbundle',
+                    'browser_download_url': 'https://github.com/tenstorrent/tt-firmware/releases/download/v19.4.1/fw_pack-80.140.40.0.fwbundle',
+                },
+            ],
+        },
+        {
+            'tag_name': 'v19.4.0',
+            'published_at': '2025-12-16T08:15:00Z',
+            'assets': [
+                {
+                    'name': 'fw_pack-80.140.39.0.fwbundle',
+                    'browser_download_url': 'https://github.com/tenstorrent/tt-firmware/releases/download/v19.4.0/fw_pack-80.140.39.0.fwbundle',
+                },
+            ],
+        },
+    ]
+
+    return {
+        'releases': releases,
+        'latest': releases[0],
+    }
+
+
+@pytest.fixture
+def mock_tt_flash_available(monkeypatch):
+    """Mock tt-flash as available."""
+    def mock_which(cmd):
+        if cmd == 'tt-flash':
+            return '/usr/bin/tt-flash'
+        return None
+
+    monkeypatch.setattr('shutil.which', mock_which)
+
+
+@pytest.fixture
+def mock_tt_flash_unavailable(monkeypatch):
+    """Mock tt-flash as unavailable."""
+    def mock_which(cmd):
+        if cmd == 'tt-flash':
+            return None
+        return None
+
+    monkeypatch.setattr('shutil.which', mock_which)
+
+
+@pytest.fixture
+def mock_firmware_download(tmp_path):
+    """Mock firmware download to temporary directory."""
+    def _download_mock(version, cache_dir=None, show_progress=True):
+        if cache_dir is None:
+            cache_dir = tmp_path / ".tt" / "firmware"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create mock firmware bundle
+        bundle_name = f"fw_pack-80.140.41.0.fwbundle"
+        bundle_path = cache_dir / bundle_name
+        bundle_path.write_text(f"Mock firmware data for {version}")
+
+        return bundle_path
+
+    return _download_mock
+
+
+@pytest.fixture
+def mock_hardware_p300c():
+    """Mock hardware detection for P300C (Blackhole 2-chip board)."""
+    return {
+        'devices': [
+            {
+                'type': 'P300C',
+                'index': 0,
+                'temperature': 35.0,
+                'power': 50.0,
+                'pci_bus': '0000:01:00.0',
+                'firmware': 0x13040200,  # 19.4.2.0
+            },
+            {
+                'type': 'P300C',
+                'index': 1,
+                'temperature': 36.0,
+                'power': 51.0,
+                'pci_bus': '0000:02:00.0',
+                'firmware': 0x13040200,  # 19.4.2.0
+            },
+        ],
+        'count': 2,
+        'primary_type': 'P300C',
+    }
