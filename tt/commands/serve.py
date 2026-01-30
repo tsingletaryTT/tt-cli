@@ -13,7 +13,7 @@ import argparse
 from pathlib import Path
 from typing import Dict, Optional, List
 
-from tt.utils import hardware
+from tt.utils import hardware, envmanager
 
 
 # Default models directory
@@ -240,20 +240,12 @@ def start(args: argparse.Namespace) -> int:
         cmd.extend(['--tensor-parallel-size', str(tensor_parallel)])
 
     # Set environment variables
+    # First, auto-fix environment to ensure TT_METAL_HOME and PYTHONPATH are set correctly
+    _, fixed_env_vars = envmanager.fix_environment(apply_to_os_environ=False)
+
+    # Start with current environment and apply fixes
     env = os.environ.copy()
-
-    # Set TT_METAL_HOME if not already set
-    if 'TT_METAL_HOME' not in env:
-        tt_metal_home = Path.home() / 'tt-metal'
-        if tt_metal_home.exists():
-            env['TT_METAL_HOME'] = str(tt_metal_home)
-
-    # Set PYTHONPATH to include TT_METAL_HOME
-    if 'TT_METAL_HOME' in env:
-        pythonpath = env.get('PYTHONPATH', '')
-        tt_metal_home = env['TT_METAL_HOME']
-        if tt_metal_home not in pythonpath:
-            env['PYTHONPATH'] = f"{tt_metal_home}:{pythonpath}" if pythonpath else tt_metal_home
+    env.update(fixed_env_vars)
 
     mesh_device = hardware.get_mesh_device()
     if mesh_device:
@@ -301,6 +293,8 @@ def start(args: argparse.Namespace) -> int:
     if arch_name:
         print(f"  TT_METAL_ARCH_NAME: {arch_name}")
     print(f"  HF_MODEL: {env.get('HF_MODEL', 'not set')}")
+    print(f"  TT_METAL_HOME: {env.get('TT_METAL_HOME', 'not set')}")
+    print(f"  PYTHONPATH: {env.get('PYTHONPATH', 'not set')}")
 
     # Start server
     try:
