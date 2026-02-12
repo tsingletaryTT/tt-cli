@@ -99,11 +99,18 @@ def get_mesh_device() -> Optional[str]:
         return 'T3K'
 
     # Blackhole configurations
-    # P300C is a 2-chip board, appears as 2 devices in tt-smi
-    if device_type == 'P300C' and count == 2:
-        return 'P300'
-    elif device_type == 'P300C' and count == 1:
-        return 'P100'  # Single chip from P300 board
+    # P300C is a 2-chip board. Each P300C board reports 2 chips in tt-smi.
+    # For software purposes, treat P300C chips as P150 chips.
+    if device_type == 'P300C':
+        if count == 4:
+            return 'P150X4'  # 2x P300C boards (4 chips total) = P150X4
+        elif count == 2:
+            return 'P300'    # 1x P300C board (2 chips) = P300
+        elif count == 1:
+            return 'P100'    # Single chip from P300C board
+        else:
+            # Unknown config, treat as P150
+            return 'P150'
 
     # P150 multi-chip configurations
     if device_type in ['P150', 'P150C']:

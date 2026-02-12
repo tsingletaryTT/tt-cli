@@ -380,12 +380,161 @@ tt status --json              # Machine-readable output
 
 ### Environment Management
 ```bash
-tt env list                   # List all virtual environments
-tt env use <name>             # Switch environment (metal, vllm, forge, xla)
-tt env check                  # Validate current environment
-tt env fix                    # Auto-fix common issues (shows what would be fixed)
-eval "$(tt env fix --export)" # Apply fixes to current shell
+tt env list                        # List all virtual environments
+tt env use <name>                  # Switch environment (metal, vllm, forge, xla)
+tt env use metal@v0.66.0-rc7       # Use specific TT-Metal version
+tt env check                       # Validate current environment
+tt env fix                         # Auto-fix common issues (shows what would be fixed)
+eval "$(tt env fix --export)"      # Apply fixes to current shell
 ```
+
+### TT-Metal Installation Management
+Manage multiple TT-Metal versions side-by-side:
+
+```bash
+# Checkout and build a specific version
+tt metal checkout --tag v0.66.0-rc7                 # Full automated install
+tt metal checkout --tag v0.66.0-rc7 --path ~/custom # Custom path
+tt metal checkout --tag v0.66.0-rc7 --set-active    # Set as active version
+
+# List installed versions
+tt metal list                      # Show all installations
+tt metal list --json               # JSON output
+
+# Set active version
+tt metal use v0.66.0-rc7           # Set as default for `tt env use metal`
+
+# Show installation details
+tt metal info v0.66.0-rc7          # Show paths, status, environments
+tt metal info v0.66.0-rc7 --json   # JSON output
+
+# Rebuild an installation
+tt metal build v0.66.0-rc7         # Rebuild (after code changes)
+tt metal build v0.66.0-rc7 --clean # Clean build
+
+# Fix/recreate environments
+tt metal setup v0.66.0-rc7         # Recreate python_env and vLLM env
+tt metal setup v0.66.0-rc7 --vllm-only  # Only vLLM env
+
+# Remove installation
+tt metal remove v0.66.0-rc7        # Remove (with confirmation)
+tt metal remove v0.66.0-rc7 --yes  # Skip confirmation
+```
+
+**Use version-specific environments**:
+```bash
+# Use active version
+tt env use metal
+
+# Use specific version
+tt env use metal@v0.66.0-rc7
+
+# Multiple versions for testing
+tt env use metal@v0.66.0-rc7    # Test with RC7
+tt env use metal@v0.65.0        # Test with older version
+```
+
+**Typical workflow for managing versions**:
+```bash
+# Install new version
+tt metal checkout --tag v0.66.0-rc7 --set-active
+
+# Verify it works
+tt env use metal@v0.66.0-rc7
+tt device test
+
+# Keep old version for comparison
+tt metal list
+✓ v0.66.0-rc7 (active)
+• v0.65.0
+
+# Switch back if needed
+tt metal use v0.65.0
+tt env use metal
+```
+
+### Stack Management (tt-jukebox style)
+Stacks are pre-configured deployment setups combining TT-Metal version, model, hardware config, and server settings:
+
+```bash
+# List available stacks
+tt stack list                        # Show all stacks (default + custom)
+tt stack list --json                 # JSON output
+
+# Show stack details
+tt stack info llama-3.1-8b-p150x4    # Full configuration details
+tt stack info llama-3.1-8b-p150x4 --json
+
+# Activate a stack
+tt stack use llama-3.1-8b-p150x4     # Sets up complete environment
+tt stack use llama-3.1-8b-p150x4 --force  # Skip warnings
+
+# Create custom stack
+tt stack create my-coding-stack      # Interactive creation
+tt stack create my-stack --from-json config.json  # From file
+
+# Remove custom stack
+tt stack remove my-coding-stack      # With confirmation
+tt stack remove my-coding-stack --yes  # Skip confirmation
+```
+
+**Default stacks included**:
+- `llama-3.1-8b-p150x4` - Llama 3.1 8B Instruct on P150X4 (coding-optimized, COMPLETE status)
+  - 128K context, data parallel 4x, decode-only sampling
+  - Best for coding tasks on P300C/P150X4 hardware
+
+- `llama-3.3-70b-p150x4` - Llama 3.3 70B Instruct on P150X4 (best reasoning, FUNCTIONAL status)
+  - 128K context, better quality for complex reasoning
+  - Requires more resources
+
+**Typical stack workflow**:
+```bash
+# 1. Activate stack (one command sets up everything)
+tt stack use llama-3.1-8b-p150x4
+
+# 2. Verify environment is configured
+tt status
+
+# 3. Start server (uses stack configuration automatically)
+tt serve start
+
+# 4. Server runs with stack's optimal settings
+# - Model: meta-llama/Llama-3.1-8B-Instruct
+# - Metal: v0.66.0-rc7
+# - max_model_len: 128000
+# - max_num_seqs: 128 (32×4 for data parallel)
+# - data_parallel: 4
+# - sample_on_device_mode: decode_only
+```
+
+**Creating a custom stack** (example JSON):
+```json
+{
+  "description": "My custom development stack",
+  "metal": "v0.66.0-rc7",
+  "model": "meta-llama/Llama-3.1-8B-Instruct",
+  "hardware": "P150X4",
+  "config": {
+    "max_model_len": 64000,
+    "max_num_seqs": 64,
+    "port": 8001
+  },
+  "env_vars": {
+    "VLLM_ALLOW_LONG_MAX_MODEL_LEN": "1"
+  },
+  "override_tt_config": {
+    "data_parallel": 4,
+    "sample_on_device_mode": "decode_only"
+  }
+}
+```
+
+**What stacks solve**:
+- ✓ One command to switch complete deployment configs
+- ✓ Reproducible setups across team members
+- ✓ Hardware-optimized settings from tt-inference-server
+- ✓ Version management (test with v0.66 vs v0.65)
+- ✓ No more manual environment configuration
 
 ### Device Management
 ```bash

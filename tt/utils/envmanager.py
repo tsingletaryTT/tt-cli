@@ -170,6 +170,77 @@ def activate_environment(env_name: str) -> Dict[str, str]:
     return env_vars
 
 
+def activate_metal_version(metal_path: Path) -> Dict[str, str]:
+    """
+    Activate a specific TT-Metal installation by path.
+
+    This is used for version-specific activation like:
+    - tt env use metal@v0.66.0-rc7
+
+    Args:
+        metal_path: Path to TT-Metal installation directory
+
+    Returns:
+        Dict of environment variables set
+
+    Raises:
+        ValueError: If installation is invalid
+    """
+    metal_path = Path(metal_path).expanduser().resolve()
+
+    if not metal_path.exists():
+        raise ValueError(f"TT-Metal installation not found: {metal_path}")
+
+    python_env = metal_path / "python_env"
+    if not python_env.exists():
+        raise ValueError(f"Python environment not found: {python_env}")
+
+    env_vars = {}
+
+    # Set TT_METAL_HOME
+    tt_metal_home = str(metal_path)
+    os.environ['TT_METAL_HOME'] = tt_metal_home
+    env_vars['TT_METAL_HOME'] = tt_metal_home
+
+    # Set PYTHONPATH
+    pythonpath = os.environ.get('PYTHONPATH', '')
+    if pythonpath and tt_metal_home not in pythonpath:
+        pythonpath = f"{tt_metal_home}:{pythonpath}"
+    else:
+        pythonpath = tt_metal_home
+
+    os.environ['PYTHONPATH'] = pythonpath
+    env_vars['PYTHONPATH'] = pythonpath
+
+    # Set LD_LIBRARY_PATH for OpenMPI
+    ld_path = os.environ.get('LD_LIBRARY_PATH', '')
+    openmpi_path = '/opt/openmpi-v5.0.7-ulfm/lib'
+
+    if openmpi_path not in ld_path:
+        if ld_path:
+            ld_path = f"{openmpi_path}:{ld_path}"
+        else:
+            ld_path = openmpi_path
+
+    os.environ['LD_LIBRARY_PATH'] = ld_path
+    env_vars['LD_LIBRARY_PATH'] = ld_path
+
+    # Set VIRTUAL_ENV to point to python_env
+    os.environ['VIRTUAL_ENV'] = str(python_env)
+    env_vars['VIRTUAL_ENV'] = str(python_env)
+
+    # Update PATH to include python_env/bin
+    path = os.environ.get('PATH', '')
+    python_bin = str(python_env / "bin")
+
+    if python_bin not in path:
+        path = f"{python_bin}:{path}"
+        os.environ['PATH'] = path
+        env_vars['PATH'] = path
+
+    return env_vars
+
+
 def check_environment() -> Dict:
     """
     Check current environment for common issues.

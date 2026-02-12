@@ -4,15 +4,124 @@ Environment management commands
 
 from pathlib import Path
 
-from tt.utils import envmanager
+from tt.utils import envmanager, metal as metalutils
 
 
 def use(args):
-    """Switch to specified environment."""
-    env_name = args.name
+    """
+    Switch to specified environment.
 
+    Supports version-specific activation for metal:
+    - tt env use metal           # Use active metal version
+    - tt env use metal@v0.66.0-rc7  # Use specific metal version
+    """
+    env_spec = args.name
+
+    # Parse version spec (e.g., "metal@v0.66.0-rc7")
+    env_name, version = metalutils.parse_version_spec(env_spec)
+
+    # Handle metal with specific version
+    if env_name == 'metal' and version:
+        print(f"Switching to TT-Metal {version} environment...")
+        print()
+
+        # Check if version is installed
+        installations = metalutils.get_metal_installations()
+
+        if version not in installations:
+            print(f"❌ TT-Metal version {version} not found")
+            print()
+            print("Available versions:")
+            for v in installations.keys():
+                print(f"  • {v}")
+            print()
+            print("To install:")
+            print(f"  tt metal checkout --tag {version}")
+            print()
+            return 1
+
+        # Get installation info
+        info = installations[version]
+        metal_path = Path(info['path'])
+        python_env = metal_path / "python_env"
+
+        if not python_env.exists():
+            print(f"❌ Python environment not found for {version}")
+            print()
+            print("Run setup:")
+            print(f"  tt metal setup {version}")
+            print()
+            return 1
+
+        # Activate with version-specific paths
+        try:
+            env_vars = envmanager.activate_metal_version(metal_path)
+
+            # Show what was set
+            print("Environment configured:")
+            for var, value in env_vars.items():
+                if value is None:
+                    print(f"  ✓ Unset {var}")
+                else:
+                    display_value = value if len(value) < 60 else value[:57] + '...'
+                    print(f"  ✓ Set {var}={display_value}")
+
+            print()
+            print(f"✓ Activated TT-Metal {version} environment")
+            print()
+            print("Note: These changes affect the current shell only.")
+            print("      For persistent changes, add to ~/.bashrc")
+
+            return 0
+
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            return 1
+
+    # Standard environment activation
     print(f"Switching to {env_name} environment...")
     print()
+
+    # For metal without version, use active version
+    if env_name == 'metal':
+        active_version = metalutils.get_active_metal()
+
+        if active_version:
+            installations = metalutils.get_metal_installations()
+            if active_version in installations:
+                info = installations[active_version]
+                metal_path = Path(info['path'])
+
+                # Check if we should use this installation
+                if metal_path.exists():
+                    print(f"Using active TT-Metal version: {active_version}")
+                    print()
+
+                    try:
+                        env_vars = envmanager.activate_metal_version(metal_path)
+
+                        # Show what was set
+                        print("Environment configured:")
+                        for var, value in env_vars.items():
+                            if value is None:
+                                print(f"  ✓ Unset {var}")
+                            else:
+                                display_value = value if len(value) < 60 else value[:57] + '...'
+                                print(f"  ✓ Set {var}={display_value}")
+
+                        print()
+                        print(f"✓ Activated TT-Metal {active_version} environment")
+                        print()
+                        print("Note: These changes affect the current shell only.")
+                        print("      For persistent changes, add to ~/.bashrc")
+
+                        return 0
+
+                    except Exception as e:
+                        # Fall back to default metal environment
+                        print(f"⚠ Could not use {active_version}: {e}")
+                        print("  Falling back to default metal environment")
+                        print()
 
     try:
         env_vars = envmanager.activate_environment(env_name)

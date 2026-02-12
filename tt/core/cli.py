@@ -9,7 +9,7 @@ import argparse
 from pathlib import Path
 
 # Import command handlers
-from tt.commands import serve, env, device, firmware, status, model, workflow, config
+from tt.commands import serve, env, device, firmware, status, model, workflow, config, metal, stack
 
 
 def create_parser():
@@ -60,7 +60,8 @@ def create_parser():
     )
     start_parser.add_argument(
         'model',
-        help='Model name (e.g., llama-3.1-8b, qwen3-0.6b)',
+        nargs='?',  # Make model optional - will use active stack if not provided
+        help='Model name (e.g., llama-3.1-8b, meta-llama/Llama-3.1-8B-Instruct). If not provided, uses active stack.',
     )
     start_parser.add_argument(
         '--port',
@@ -175,8 +176,7 @@ def create_parser():
     )
     use_parser.add_argument(
         'name',
-        choices=['metal', 'vllm', 'forge', 'xla'],
-        help='Environment name',
+        help='Environment name (or metal@version for specific version)',
     )
     use_parser.set_defaults(func=env.use)
 
@@ -227,6 +227,177 @@ def create_parser():
         help='Install uv for faster operations',
     )
     uv_parser.set_defaults(func=env.install_uv)
+
+    # ========================================================================
+    # tt metal - TT-Metal installation management
+    # ========================================================================
+    metal_parser = subparsers.add_parser(
+        'metal',
+        help='Manage TT-Metal installations',
+    )
+    metal_subparsers = metal_parser.add_subparsers(
+        dest='metal_command',
+        help='Metal commands',
+        required=True,
+    )
+
+    # tt metal checkout
+    checkout_parser = metal_subparsers.add_parser(
+        'checkout',
+        help='Checkout and build a specific TT-Metal version',
+    )
+    checkout_parser.add_argument(
+        '--tag',
+        required=True,
+        help='Git tag to checkout (e.g., v0.66.0-rc7)',
+    )
+    checkout_parser.add_argument(
+        '--path',
+        help='Installation path (default: ~/tt-metal-versions/<tag>)',
+    )
+    checkout_parser.add_argument(
+        '--python',
+        help='Python version to use (default: 3.12)',
+    )
+    checkout_parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Overwrite existing installation',
+    )
+    checkout_parser.add_argument(
+        '--skip-deps',
+        action='store_true',
+        help='Skip dependency installation',
+    )
+    checkout_parser.add_argument(
+        '--skip-build',
+        action='store_true',
+        help='Skip build step',
+    )
+    checkout_parser.add_argument(
+        '--skip-env',
+        action='store_true',
+        help='Skip python_env creation',
+    )
+    checkout_parser.add_argument(
+        '--skip-vllm',
+        action='store_true',
+        help='Skip vLLM environment creation',
+    )
+    checkout_parser.add_argument(
+        '--build-tt-train',
+        action='store_true',
+        default=True,
+        help='Build with tt-train support (default: True)',
+    )
+    checkout_parser.add_argument(
+        '--set-active',
+        action='store_true',
+        help='Set as active version after checkout',
+    )
+    checkout_parser.set_defaults(func=metal.checkout)
+
+    # tt metal list
+    metal_list_parser = metal_subparsers.add_parser(
+        'list',
+        help='List installed TT-Metal versions',
+    )
+    metal_list_parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output as JSON',
+    )
+    metal_list_parser.set_defaults(func=metal.list_installations)
+
+    # tt metal use
+    metal_use_parser = metal_subparsers.add_parser(
+        'use',
+        help='Set active TT-Metal version',
+    )
+    metal_use_parser.add_argument(
+        'version',
+        help='Version to set as active',
+    )
+    metal_use_parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Set as active even if installation has issues',
+    )
+    metal_use_parser.set_defaults(func=metal.use)
+
+    # tt metal info
+    metal_info_parser = metal_subparsers.add_parser(
+        'info',
+        help='Show installation details',
+    )
+    metal_info_parser.add_argument(
+        'version',
+        help='Version to show info for',
+    )
+    metal_info_parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output as JSON',
+    )
+    metal_info_parser.set_defaults(func=metal.info)
+
+    # tt metal remove
+    metal_remove_parser = metal_subparsers.add_parser(
+        'remove',
+        help='Remove a TT-Metal installation',
+    )
+    metal_remove_parser.add_argument(
+        'version',
+        help='Version to remove',
+    )
+    metal_remove_parser.add_argument(
+        '--yes',
+        action='store_true',
+        help='Skip confirmation prompt',
+    )
+    metal_remove_parser.set_defaults(func=metal.remove)
+
+    # tt metal build
+    metal_build_parser = metal_subparsers.add_parser(
+        'build',
+        help='Build a TT-Metal installation',
+    )
+    metal_build_parser.add_argument(
+        'version',
+        help='Version to build',
+    )
+    metal_build_parser.add_argument(
+        '--clean',
+        action='store_true',
+        help='Clean build directory first',
+    )
+    metal_build_parser.add_argument(
+        '--build-tt-train',
+        action='store_true',
+        default=True,
+        help='Build with tt-train support (default: True)',
+    )
+    metal_build_parser.set_defaults(func=metal.build)
+
+    # tt metal setup
+    metal_setup_parser = metal_subparsers.add_parser(
+        'setup',
+        help='Setup environments for installation',
+    )
+    metal_setup_parser.add_argument(
+        'version',
+        help='Version to setup',
+    )
+    metal_setup_parser.add_argument(
+        '--python',
+        help='Python version to use (default: 3.12)',
+    )
+    metal_setup_parser.add_argument(
+        '--vllm-only',
+        action='store_true',
+        help='Only setup vLLM environment',
+    )
+    metal_setup_parser.set_defaults(func=metal.setup)
 
     # ========================================================================
     # tt device - Device management
@@ -566,6 +737,100 @@ def create_parser():
         help='Quick mode (validation only, no server start)',
     )
     workflow_run_parser.set_defaults(func=workflow.run)
+
+    # ========================================================================
+    # tt stack - Stack management (tt-jukebox style)
+    # ========================================================================
+    stack_parser = subparsers.add_parser(
+        'stack',
+        help='Manage deployment stacks',
+    )
+    stack_subparsers = stack_parser.add_subparsers(
+        dest='stack_command',
+        help='Stack commands',
+        required=True,
+    )
+
+    # tt stack list
+    stack_list_parser = stack_subparsers.add_parser(
+        'list',
+        help='List available stacks',
+    )
+    stack_list_parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output as JSON',
+    )
+    stack_list_parser.set_defaults(func=stack.list_stacks)
+
+    # tt stack use
+    stack_use_parser = stack_subparsers.add_parser(
+        'use',
+        help='Activate a stack',
+    )
+    stack_use_parser.add_argument(
+        'name',
+        help='Stack name',
+    )
+    stack_use_parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Activate even with warnings',
+    )
+    stack_use_parser.set_defaults(func=stack.use)
+
+    # tt stack info
+    stack_info_parser = stack_subparsers.add_parser(
+        'info',
+        help='Show stack details',
+    )
+    stack_info_parser.add_argument(
+        'name',
+        help='Stack name',
+    )
+    stack_info_parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output as JSON',
+    )
+    stack_info_parser.set_defaults(func=stack.info)
+
+    # tt stack create
+    stack_create_parser = stack_subparsers.add_parser(
+        'create',
+        help='Create a new stack',
+    )
+    stack_create_parser.add_argument(
+        'name',
+        help='Stack name',
+    )
+    stack_create_parser.add_argument(
+        '--from-json',
+        dest='from_json',
+        help='Load configuration from JSON file',
+    )
+    stack_create_parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Overwrite existing stack',
+    )
+    stack_create_parser.set_defaults(func=stack.create)
+
+    # tt stack remove
+    stack_remove_parser = stack_subparsers.add_parser(
+        'remove',
+        help='Remove a stack',
+    )
+    stack_remove_parser.add_argument(
+        'name',
+        help='Stack name',
+    )
+    stack_remove_parser.add_argument(
+        '--yes',
+        action='store_true',
+        help='Skip confirmation',
+    )
+    stack_remove_parser.set_defaults(func=stack.remove)
 
     # ========================================================================
     # tt config - Configuration management

@@ -13,7 +13,8 @@ import argparse
 from pathlib import Path
 from typing import Dict, Optional, List
 
-from tt.utils import hardware, envmanager
+from tt.utils import hardware, envmanager, stack as stackutils
+from tt.commands import model as modelutils
 
 
 # Default models directory
@@ -182,16 +183,64 @@ def start(args: argparse.Namespace) -> int:
     device_count = hw.get('count', 1)
 
     print(f"Hardware: {device_count}x {device_type}")
+    print()
 
-    # Check if model exists
+    # Check if we should use active stack configuration
+    stack_config = None
+    active_stack = stackutils.get_active_stack()
+
+    if not args.model or (active_stack and args.model):
+        # No model specified, or model specified with active stack
+        if active_stack:
+            print(f"Using active stack: {active_stack}")
+            stack_config = stackutils.get_stack(active_stack)
+
+            if stack_config:
+                # Use stack model if no model specified
+                if not args.model:
+                    args.model = stack_config['model']
+                    print(f"  Model: {args.model}")
+
+                # Apply stack config defaults
+                if 'config' in stack_config:
+                    cfg = stack_config['config']
+                    if not hasattr(args, 'port') or args.port == 8000:
+                        args.port = cfg.get('port', 8000)
+                    if not hasattr(args, 'max_model_len') or args.max_model_len is None:
+                        args.max_model_len = cfg.get('max_model_len')
+
+                print()
+        elif not args.model:
+            # No model and no active stack
+            print("❌ No model specified and no active stack")
+            print()
+            print("Either:")
+            print("  1. Specify a model: tt serve start <model>")
+            print("  2. Activate a stack: tt stack use <stack-name>")
+            print()
+            return 1
+
+    # Resolve model path (handles HF cache, direct paths, etc.)
     models_dir = Path(args.models_dir) if (hasattr(args, 'models_dir') and args.models_dir) else DEFAULT_MODELS_DIR
     models_dir = Path(models_dir)
-    model_path = models_dir / args.model
 
-    if not model_path.exists():
-        print(f"❌ Model not found: {model_path}")
-        print(f"   Available models: tt model list")
+    print(f"Resolving model: {args.model}")
+    model_path = modelutils.find_model_path(args.model, models_dir)
+
+    if not model_path:
+        print(f"❌ Model not found: {args.model}")
+        print()
+        print("Searched:")
+        print(f"  • Direct: {models_dir / args.model}")
+        print(f"  • HF cache: {models_dir / modelutils.hf_cache_name(args.model)}")
+        print()
+        print("Available models:")
+        print("  Run: tt model list")
+        print()
         return 1
+
+    print(f"✓ Found model at: {model_path}")
+    print()
 
     # Check if already running
     pid_dir = Path(args.pid_dir) if (hasattr(args, 'pid_dir') and args.pid_dir) else DEFAULT_PID_DIR
@@ -208,13 +257,37 @@ def start(args: argparse.Namespace) -> int:
             # Process doesn't exist, clean up stale PID file
             delete_pid_file(args.model, pid_dir)
 
+    # Apply stack configuration if available
+    max_num_seqs = None
+    override_tt_config = {}
+
+    if stack_config and 'config' in stack_config:
+        cfg = stack_config['config']
+
+        # Get max_num_seqs from stack
+        if 'max_num_seqs' in cfg:
+            max_num_seqs = cfg['max_num_seqs']
+            print(f"  Using stack max_num_seqs: {max_num_seqs}")
+
+        # Get override_tt_config from stack
+        if 'override_tt_config' in stack_config:
+            override_tt_config = stack_config['override_tt_config']
+            print(f"  Using stack TT config overrides: {list(override_tt_config.keys())}")
+
     # Get optimal parameters
     optimal = get_optimal_params(hw, args.model)
 
-    # Override with user-provided values
-    max_model_len = args.max_model_len if args.max_model_len else optimal['max_model_len']
+    # Override with user-provided values, then stack, then optimal
+    max_model_len = args.max_model_len if args.max_model_len else (
+        stack_config['config'].get('max_model_len') if stack_config and 'config' in stack_config
+        else optimal['max_model_len']
+    )
     tensor_parallel = args.tensor_parallel if args.tensor_parallel else optimal['tensor_parallel_size']
     port = args.port
+
+    # Use stack max_num_seqs if available, otherwise optimal
+    if max_num_seqs is None:
+        max_num_seqs = optimal['max_num_seqs']
 
     # Determine which Python to use (check for vllm availability)
     python_cmd = 'python'
@@ -231,7 +304,7 @@ def start(args: argparse.Namespace) -> int:
         '--model', str(model_path),
         '--port', str(port),
         '--max-model-len', str(max_model_len),
-        '--max-num-seqs', str(optimal['max_num_seqs']),
+        '--max-num-seqs', str(max_num_seqs),
         '--block-size', str(optimal['block_size']),
     ]
 
@@ -246,6 +319,19 @@ def start(args: argparse.Namespace) -> int:
     # Start with current environment and apply fixes
     env = os.environ.copy()
     env.update(fixed_env_vars)
+
+    # Apply stack environment variables
+    if stack_config and 'env_vars' in stack_config:
+        for var, value in stack_config['env_vars'].items():
+            env[var] = str(value)
+            print(f"  Stack env: {var}={value}")
+
+    # Apply stack TT config overrides as environment variables
+    # These are used by TT-Metal vLLM backend
+    if override_tt_config:
+        import json
+        env['TT_METAL_VLLM_OVERRIDE_CONFIG'] = json.dumps(override_tt_config)
+        print(f"  Stack TT overrides: {override_tt_config}")
 
     mesh_device = hardware.get_mesh_device()
     if mesh_device:

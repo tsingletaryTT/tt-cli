@@ -412,6 +412,123 @@ FIRMWARE_RECOMMENDATIONS = {
 
 **Important**: Recommendations are advisory only. The CLI never blocks firmware operations - it shows warnings but always allows developers to proceed. This respects developer expertise while providing helpful guidance.
 
+### TT-Metal Installation Management
+
+Always use `tt.utils.metal` module for managing multiple TT-Metal installations:
+
+```python
+from tt.utils import metal
+from pathlib import Path
+
+# Get all registered installations
+installations = metal.get_metal_installations()
+for version, info in installations.items():
+    print(f"{version}: {info['path']}")
+
+# Get active version
+active = metal.get_active_metal()
+print(f"Active version: {active}")
+
+# Set active version
+metal.set_active_metal("v0.66.0-rc7")
+
+# Register a new installation
+metal.register_metal_installation(
+    version="v0.66.0-rc7",
+    path=Path.home() / "tt-metal",
+    tag="v0.66.0-rc7",
+    python_env=Path.home() / "tt-metal/python_env",
+    vllm_env=Path.home() / "tt-metal/build/python_env_vllm",
+)
+
+# Validate installation
+validation = metal.validate_metal_installation(Path.home() / "tt-metal")
+if not validation['valid']:
+    print(f"Issues: {validation['issues']}")
+
+# Checkout and build new version
+exit_code = metal.checkout_metal(
+    tag="v0.66.0-rc7",
+    path=Path.home() / "tt-metal-versions/v0.66.0-rc7",
+    force_update_submodules=True,
+)
+
+# Build installation
+exit_code = metal.build_metal(
+    metal_path=Path.home() / "tt-metal-versions/v0.66.0-rc7",
+    build_tt_train=True,
+    clean=False,
+)
+
+# Create environments
+metal.create_python_env(metal_path, python_version="3.12")
+metal.create_vllm_env(metal_path, python_version="3.12")
+metal.install_vllm_dependencies(metal_path)
+```
+
+**Available functions**:
+- `get_metal_installations()` - Get all registered installations from config
+- `get_active_metal()` - Get currently active version
+- `set_active_metal(version)` - Set active version
+- `register_metal_installation(...)` - Register installation in config
+- `unregister_metal_installation(version)` - Remove from config
+- `checkout_metal(tag, path, ...)` - Clone and checkout specific version
+- `install_dependencies(path)` - Run install_dependencies.sh
+- `build_metal(path, ...)` - Build with cmake
+- `create_python_env(path, ...)` - Create python_env
+- `create_vllm_env(path, ...)` - Create vLLM environment
+- `install_vllm_dependencies(path)` - Install TT llama-models, etc.
+- `validate_metal_installation(path)` - Check installation validity
+- `parse_version_spec(spec)` - Parse `env@version` syntax
+
+**Version-specific environment activation**:
+```python
+from tt.utils import envmanager
+
+# Activate specific version
+env_vars = envmanager.activate_metal_version(Path.home() / "tt-metal")
+
+# This is used by: tt env use metal@v0.66.0-rc7
+```
+
+**Integration with env commands**:
+- `tt env use metal` - Use active metal version
+- `tt env use metal@v0.66.0-rc7` - Use specific version
+- Active version is stored in `~/.ttconfig` under `metal.active`
+- Installations are tracked in `~/.ttconfig` under `metal.installations`
+
+**Config structure** (`~/.ttconfig`):
+```yaml
+metal:
+  active: v0.66.0-rc7
+  installations:
+    v0.66.0-rc7:
+      path: /home/user/tt-metal
+      tag: v0.66.0-rc7
+      python_env: /home/user/tt-metal/python_env
+      vllm_env: /home/user/tt-metal/build/python_env_vllm
+      created: '2026-02-03T23:39:47Z'
+```
+
+**Future: Stack management**:
+This foundation enables future tt-jukebox-style stack management:
+```yaml
+stacks:
+  qwen-dev:
+    metal: v0.66.0-rc7
+    model: Qwen3-0.6B
+    hardware: P300C
+    config:
+      max_model_len: 2048
+      tensor_parallel: 2
+```
+
+Commands like `tt serve start qwen-dev` would automatically:
+1. Activate metal v0.66.0-rc7
+2. Load Qwen3-0.6B model
+3. Configure for P300C hardware
+4. Start vLLM server with specified config
+
 ### Error Handling
 
 **Pattern**: Fail gracefully with helpful error messages.
@@ -942,20 +1059,30 @@ while True:
 **Implemented**:
 - ✅ Hardware detection (`tt device info`, `tt device test`)
 - ✅ Environment management (`tt env use/list/check/fix`)
+- ✅ **TT-Metal installation management** (`tt metal checkout/list/use/info/remove/build/setup`) - **NEW**
 - ✅ Model management (`tt model list/info/check`)
-- ✅ **Firmware management** (`tt firmware list/current/download/flash/verify/latest`) - **NEW**
+- ✅ Firmware management (`tt firmware list/current/download/flash/verify/latest`)
 - ✅ Status dashboard (`tt status`)
 - ✅ Test suite (122 tests, 119 passing, 3 pre-existing failures)
 - ✅ Documentation (COOKBOOK, TESTING, README, CLAUDE)
 
 **Metrics**:
-- 2,500+ lines of Python code
-- 122 tests (58 new firmware tests)
+- 3,000+ lines of Python code
+- 122 tests
 - 0 external dependencies (stdlib only)
-- 5 command categories
-- 18 commands implemented
+- 6 command categories
+- 25 commands implemented
 
-**Recent additions (2026-01-30)**:
+**Recent additions (2026-02-03)**:
+- ✅ **TT-Metal installation management** - Complete version management system
+  - `tt/utils/metal.py` - Metal installation utilities (500+ lines)
+  - `tt/commands/metal.py` - Metal command handlers (600+ lines)
+  - Version-specific environment activation: `tt env use metal@v0.66.0-rc7`
+  - Installation registry in config: `~/.ttconfig`
+  - Full workflow: checkout → build → setup → use
+  - Foundation for future tt-jukebox-style stack management
+
+**Previous additions (2026-01-30)**:
 - ✅ Firmware utility module (`tt/utils/firmware.py`) - 650+ lines
 - ✅ Firmware commands (`tt/commands/firmware.py`) - 500+ lines
 - ✅ 42 unit tests for firmware utilities
