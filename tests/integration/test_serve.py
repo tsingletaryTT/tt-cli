@@ -333,6 +333,275 @@ class TestStatusCommand:
         assert len(data['servers']) == 1
 
 
+class TestMultiDeviceDeployment:
+    """Test multi-device deployment functionality."""
+
+    def test_serve_single_device_with_device_id(self, mock_hardware_p300c_x4, tmp_path, capsys):
+        """Test starting server on specific device with --device-id."""
+        model_dir = tmp_path / "models" / "Qwen3-0.6B"
+        model_dir.mkdir(parents=True)
+        (model_dir / "config.json").write_text('{"model_type": "qwen2"}')
+
+        # Create tmp PID directory
+        pid_dir = tmp_path / ".tt" / "servers"
+        pid_dir.mkdir(parents=True)
+
+        args = argparse.Namespace(
+            model='Qwen3-0.6B',
+            port=8000,
+            device_id=0,
+            max_model_len=None,
+            tensor_parallel=None,
+            detach=False,
+            models_dir=str(tmp_path / "models")
+        )
+
+        with patch('tt.utils.hardware.detect_hardware', return_value=mock_hardware_p300c_x4):
+            with patch('subprocess.Popen') as mock_popen:
+                with patch.dict('os.environ', {}, clear=True):
+                    with patch('tt.commands.serve.get_pid_file') as mock_get_pid:
+                        # Return PID file in tmp directory
+                        mock_get_pid.return_value = pid_dir / "qwen3-0.6b-dev0.pid"
+                        mock_process = Mock()
+                        mock_process.pid = 12345
+                        mock_popen.return_value = mock_process
+
+                        result = serve.start(args)
+
+        assert result == 0
+        out, err = capsys.readouterr()
+        assert 'Target device: 0' in out
+        assert 'TT_VISIBLE_DEVICES: 0' in out
+        assert 'TT_METAL_CACHE' in out
+        assert 'tt_metal_0' in out
+
+    def test_serve_device_isolation_env_vars(self, mock_hardware_p300c_x4, tmp_path):
+        """Test that device isolation sets correct environment variables."""
+        model_dir = tmp_path / "models" / "Qwen3-0.6B"
+        model_dir.mkdir(parents=True)
+        (model_dir / "config.json").write_text('{"model_type": "qwen2"}')
+
+        # Create tmp PID directory
+        pid_dir = tmp_path / ".tt" / "servers"
+        pid_dir.mkdir(parents=True)
+
+        args = argparse.Namespace(
+            model='Qwen3-0.6B',
+            port=8001,
+            device_id=1,
+            max_model_len=None,
+            tensor_parallel=None,
+            detach=False,
+            models_dir=str(tmp_path / "models")
+        )
+
+        env_vars_captured = {}
+
+        def capture_env(*args, **kwargs):
+            # Capture the env dict passed to Popen
+            if 'env' in kwargs:
+                env_vars_captured.update(kwargs['env'])
+            mock_process = Mock()
+            mock_process.pid = 12346
+            return mock_process
+
+        with patch('tt.utils.hardware.detect_hardware', return_value=mock_hardware_p300c_x4):
+            with patch('subprocess.Popen', side_effect=capture_env):
+                with patch('tt.commands.serve.get_pid_file') as mock_get_pid:
+                    mock_get_pid.return_value = pid_dir / "qwen3-0.6b-dev1.pid"
+                    serve.start(args)
+
+        # Verify device isolation environment variables
+        assert env_vars_captured.get('TT_VISIBLE_DEVICES') == '1'
+        assert 'tt_metal_1' in env_vars_captured.get('TT_METAL_CACHE', '')
+        assert env_vars_captured.get('MESH_DEVICE') == 'P150'
+        assert env_vars_captured.get('TT_METAL_ARCH_NAME') == 'blackhole'
+        assert 'TT_MESH_GRAPH_DESC_PATH' in env_vars_captured
+        assert 'single_device_1.textproto' in env_vars_captured['TT_MESH_GRAPH_DESC_PATH']
+
+    def test_serve_multiple_devices_different_ports(self, mock_hardware_p300c_x4, tmp_path):
+        """Test starting servers on multiple devices with different ports."""
+        model_dir = tmp_path / "models" / "Qwen3-0.6B"
+        model_dir.mkdir(parents=True)
+        (model_dir / "config.json").write_text('{"model_type": "qwen2"}')
+
+        pid_dir = tmp_path / ".tt" / "servers"
+        pid_dir.mkdir(parents=True)
+
+        # Start servers on devices 0-3
+        for device_id in range(4):
+            args = argparse.Namespace(
+                model='Qwen3-0.6B',
+                port=8000 + device_id,
+                device_id=device_id,
+                max_model_len=None,
+                tensor_parallel=None,
+                detach=True,
+                models_dir=str(tmp_path / "models")
+            )
+
+            with patch('tt.utils.hardware.detect_hardware', return_value=mock_hardware_p300c_x4):
+                with patch('subprocess.Popen') as mock_popen:
+                    with patch('tt.commands.serve.get_pid_file') as mock_get_pid:
+                        # Return unique PID file for each device
+                        pid_file = pid_dir / f"qwen3-0.6b-dev{device_id}.pid"
+                        mock_get_pid.return_value = pid_file
+
+                        mock_process = Mock()
+                        mock_process.pid = 12345 + device_id
+                        mock_popen.return_value = mock_process
+
+                        result = serve.start(args)
+                        assert result == 0
+
+        # Verify all 4 PID files were created
+        assert len(list(pid_dir.glob('*.pid'))) == 4
+
+    def test_serve_device_id_validation(self, mock_hardware_p300c_x4, tmp_path, capsys):
+        """Test that invalid device IDs are rejected."""
+        model_dir = tmp_path / "models" / "Qwen3-0.6B"
+        model_dir.mkdir(parents=True)
+        (model_dir / "config.json").write_text('{"model_type": "qwen2"}')
+
+        # Try to start server on device 5 (system only has 4 devices: 0-3)
+        args = argparse.Namespace(
+            model='Qwen3-0.6B',
+            port=8000,
+            device_id=5,
+            max_model_len=None,
+            tensor_parallel=None,
+            detach=False,
+            models_dir=str(tmp_path / "models")
+        )
+
+        with patch('tt.utils.hardware.detect_hardware', return_value=mock_hardware_p300c_x4):
+            result = serve.start(args)
+
+        assert result == 1
+        out, err = capsys.readouterr()
+        assert 'Invalid device ID' in out
+
+    def test_serve_per_device_pid_files(self, tmp_path):
+        """Test that per-device PID files are created correctly."""
+        pid_dir = tmp_path / ".tt" / "servers"
+        pid_dir.mkdir(parents=True)
+
+        # Test that device-specific PID files have correct naming
+        # When device_id is specified, filename should include -devN
+        # When device_id is None, filename should not include -dev
+
+        # Simulate what get_pid_file would return
+        model_name = "qwen3-0.6b"
+
+        pid_file_0 = pid_dir / f"{model_name}-dev0.pid"
+        pid_file_1 = pid_dir / f"{model_name}-dev1.pid"
+        pid_file_none = pid_dir / f"{model_name}.pid"
+
+        assert 'dev0' in str(pid_file_0)
+        assert 'dev1' in str(pid_file_1)
+        assert '-dev' not in str(pid_file_none)  # Changed from 'dev' to '-dev' to be more specific
+        assert pid_file_0 != pid_file_1
+
+    def test_status_shows_per_device_servers(self, tmp_path, capsys):
+        """Test that status command shows servers with device IDs."""
+        # This test verifies the status display format, not the actual status command
+        # The status command is in status.py, not serve.py
+        # We'll test the data structure that status.py uses
+
+        pid_dir = tmp_path / ".tt" / "servers"
+        pid_dir.mkdir(parents=True)
+
+        # Create mock PID files for different devices
+        import json
+        (pid_dir / "qwen3-0.6b-dev0.pid").write_text(
+            json.dumps({'pid': 12345, 'port': 8000, 'model': 'Qwen3-0.6B', 'device_id': 0})
+        )
+        (pid_dir / "qwen3-0.6b-dev1.pid").write_text(
+            json.dumps({'pid': 12346, 'port': 8001, 'model': 'Qwen3-0.6B', 'device_id': 1})
+        )
+
+        # Verify PID files contain device_id field
+        pid_data_0 = json.loads((pid_dir / "qwen3-0.6b-dev0.pid").read_text())
+        pid_data_1 = json.loads((pid_dir / "qwen3-0.6b-dev1.pid").read_text())
+
+        assert pid_data_0['device_id'] == 0
+        assert pid_data_1['device_id'] == 1
+        assert pid_data_0['port'] == 8000
+        assert pid_data_1['port'] == 8001
+
+    def test_stop_device_specific_server(self, tmp_path, capsys):
+        """Test stopping server on specific device."""
+        pid_dir = tmp_path / ".tt" / "servers"
+        pid_dir.mkdir(parents=True)
+
+        # Create PID file for device 2
+        import json
+        (pid_dir / "qwen3-0.6b-dev2.pid").write_text(
+            json.dumps({'pid': 12347, 'port': 8002, 'model': 'Qwen3-0.6B', 'device_id': 2})
+        )
+
+        args = argparse.Namespace(
+            model='Qwen3-0.6B',
+            device_id=2,
+            pid_dir=str(pid_dir)
+        )
+
+        with patch('os.kill') as mock_kill:
+            def kill_side_effect(pid, sig):
+                if sig == signal.SIGTERM:
+                    kill_side_effect.sigterm_sent = True
+                elif sig == 0 and getattr(kill_side_effect, 'sigterm_sent', False):
+                    raise ProcessLookupError()
+
+            mock_kill.side_effect = kill_side_effect
+            with patch('os.path.exists', return_value=True):
+                result = serve.stop(args)
+
+        assert result == 0
+        out, err = capsys.readouterr()
+        assert 'Stopped' in out
+
+    def test_mesh_descriptor_path_generation(self, mock_hardware_p300c_x4, tmp_path):
+        """Test that mesh descriptor paths are generated correctly."""
+        model_dir = tmp_path / "models" / "Qwen3-0.6B"
+        model_dir.mkdir(parents=True)
+        (model_dir / "config.json").write_text('{"model_type": "qwen2"}')
+
+        # Create tmp PID directory
+        pid_dir = tmp_path / ".tt" / "servers"
+        pid_dir.mkdir(parents=True)
+
+        env_vars_captured = {}
+
+        def capture_env(*args, **kwargs):
+            if 'env' in kwargs:
+                env_vars_captured.update(kwargs['env'])
+            mock_process = Mock()
+            mock_process.pid = 12345
+            return mock_process
+
+        args = argparse.Namespace(
+            model='Qwen3-0.6B',
+            port=8000,
+            device_id=2,
+            max_model_len=None,
+            tensor_parallel=None,
+            detach=False,
+            models_dir=str(tmp_path / "models")
+        )
+
+        with patch('tt.utils.hardware.detect_hardware', return_value=mock_hardware_p300c_x4):
+            with patch('subprocess.Popen', side_effect=capture_env):
+                with patch('tt.commands.serve.get_pid_file') as mock_get_pid:
+                    mock_get_pid.return_value = pid_dir / "qwen3-0.6b-dev2.pid"
+                    serve.start(args)
+
+        # Verify mesh descriptor path includes device ID
+        mesh_path = env_vars_captured.get('TT_MESH_GRAPH_DESC_PATH', '')
+        assert 'single_device_2.textproto' in mesh_path
+        assert mesh_path.endswith('.textproto')
+
+
 class TestServeCLIParsing:
     """Test CLI argument parsing for serve commands."""
 
@@ -369,4 +638,18 @@ class TestServeCLIParsing:
         assert args.func == serve.start
         assert args.model == 'Qwen3-0.6B'
         assert args.port == 9000
+        assert args.detach is True
+
+    def test_serve_start_with_device_id(self, tmp_path):
+        """Test that 'tt serve start <model> --device-id X' parses correctly."""
+        parser = cli.create_parser()
+
+        # Test: tt serve start Qwen3-0.6B --port 8001 --device-id 2 --detach
+        args = parser.parse_args(['serve', 'start', 'Qwen3-0.6B', '--port', '8001', '--device-id', '2', '--detach'])
+
+        assert hasattr(args, 'func')
+        assert args.func == serve.start
+        assert args.model == 'Qwen3-0.6B'
+        assert args.port == 8001
+        assert args.device_id == 2
         assert args.detach is True

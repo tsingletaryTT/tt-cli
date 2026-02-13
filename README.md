@@ -316,6 +316,80 @@ $ tt stop Qwen3-0.6B
 
 **See**: [COOKBOOK.md](COOKBOOK.md) recipes 19-28 for server management workflows.
 
+#### 🎯 Multi-Device Deployment (✅ Implemented)
+- **Device isolation** - Run independent servers on each chip
+- **Per-device configuration** - Separate caches, ports, and logs
+- **Custom mesh descriptors** - Automatic generation for single-chip mode
+- **Concurrent deployment** - Start multiple servers simultaneously
+
+Deploy the same model on 4 separate chips, each with its own vLLM server:
+
+```bash
+# Start server on device 0 (port 8000)
+$ tt serve start Qwen3-0.6B --port 8000 --device-id 0 --detach
+
+Hardware: 4x P300C
+
+Using active stack: qwen3-0.6b-p100
+
+Starting vLLM server:
+  Model: Qwen3-0.6B
+  Port: 8000
+  Target device: 0
+  TT_VISIBLE_DEVICES: 0
+  TT_METAL_CACHE: ~/.cache/tt_metal_0
+  TT_MESH_GRAPH_DESC_PATH: .../single_device_0.textproto
+  MESH_DEVICE: P150 (single-chip mode)
+
+🚀 Server started in background (PID: 12345)
+
+# Start servers on remaining devices
+$ tt serve start Qwen3-0.6B --port 8001 --device-id 1 --detach
+$ tt serve start Qwen3-0.6B --port 8002 --device-id 2 --detach
+$ tt serve start Qwen3-0.6B --port 8003 --device-id 3 --detach
+
+# Check all servers
+$ tt status
+
+🚀 Running Servers
+   Total: 4 server(s)
+   Ready: 4 | Initializing: 0
+
+   ✓ Port 8000 (device 0): READY
+   ✓ Port 8001 (device 1): READY
+   ✓ Port 8002 (device 2): READY
+   ✓ Port 8003 (device 3): READY
+
+# Test each server
+$ curl http://localhost:8000/v1/models  # Device 0
+$ curl http://localhost:8001/v1/models  # Device 1
+...
+```
+
+**Key features**:
+- **Device isolation**: Each server uses `TT_VISIBLE_DEVICES` to see only its assigned chip
+- **Separate caches**: Each device has its own `TT_METAL_CACHE` directory
+- **Custom mesh descriptors**: Automatic generation of single-chip mesh graph descriptors
+- **Per-device status**: `tt status` shows which device each server is using
+- **Independent scaling**: Each device runs independently with its own capacity
+
+**Environment variables per device**:
+```bash
+TT_VISIBLE_DEVICES=N                    # Isolate to device N
+TT_METAL_CACHE=~/.cache/tt_metal_N      # Separate cache per device
+TT_MESH_GRAPH_DESC_PATH=single_device_N.textproto  # Custom mesh descriptor
+MESH_DEVICE=P150                        # Single-chip mode
+TT_METAL_ARCH_NAME=blackhole            # Architecture
+```
+
+**Use cases**:
+- **Independent inference servers**: Load balance across 4 separate ports
+- **Multi-tenant deployment**: Isolate different users/workloads on different chips
+- **Development/testing**: Test different configurations simultaneously
+- **Maximum throughput**: Avoid data-parallel overhead, maximize per-chip utilization
+
+**See**: [COOKBOOK.md](COOKBOOK.md) recipes 29-32 for multi-device deployment workflows.
+
 #### 📥 Model Downloads (✅ Implemented)
 - **HuggingFace integration** using `huggingface_hub`
 - **Progress tracking** during downloads

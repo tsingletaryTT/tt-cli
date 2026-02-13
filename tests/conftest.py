@@ -313,3 +313,46 @@ def mock_hardware_p300c():
         'count': 2,
         'primary_type': 'P300C',
     }
+
+
+@pytest.fixture
+def mock_hardware_p300c_x4():
+    """Mock hardware detection for 4x P300C (Blackhole 4-chip system)."""
+    return {
+        'devices': [
+            {
+                'type': 'P300C',
+                'index': 0,
+                'temperature': 35.0,
+                'power': 50.0,
+                'pci_bus': '0000:01:00.0',
+                'firmware': 0x13050000,  # 19.5.0
+            },
+            {
+                'type': 'P300C',
+                'index': 1,
+                'temperature': 36.0,
+                'power': 51.0,
+                'pci_bus': '0000:02:00.0',
+                'firmware': 0x13050000,  # 19.5.0
+            },
+            {
+                'type': 'P300C',
+                'index': 2,
+                'temperature': 34.0,
+                'power': 49.0,
+                'pci_bus': '0000:03:00.0',
+                'firmware': 0x13050000,  # 19.5.0
+            },
+            {
+                'type': 'P300C',
+                'index': 3,
+                'temperature': 37.0,
+                'power': 52.0,
+                'pci_bus': '0000:04:00.0',
+                'firmware': 0x13050000,  # 19.5.0
+            },
+        ],
+        'count': 4,
+        'primary_type': 'P300C',
+    }

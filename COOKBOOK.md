@@ -1746,6 +1746,247 @@ tt device test || exit 1
 
 ---
 
+## Multi-Device Deployment
+
+Deploy models on individual chips for maximum throughput and isolation.
+
+### Recipe: Starting Server on Specific Device
+
+**Use case**: You want to run a vLLM server on a single chip (device 0) in a multi-chip system.
+
+**Prerequisites**:
+- Multi-chip system (e.g., 4x P300C)
+- Model downloaded locally
+- Active stack configured for single-chip mode
+
+**Command**:
+```bash
+tt serve start Qwen3-0.6B --port 8000 --device-id 0 --detach
+```
+
+**What happens**:
+1. CLI detects 4 devices available
+2. Sets `TT_VISIBLE_DEVICES=0` to isolate to device 0
+3. Creates device-specific cache: `~/.cache/tt_metal_0`
+4. Generates mesh descriptor: `single_device_0.textproto`
+5. Sets `MESH_DEVICE=P150` (single-chip mode)
+6. Starts vLLM server in background
+7. Creates PID file: `~/.tt/servers/qwen3-0.6b-dev0.pid`
+8. Logs to: `~/.tt/servers/logs/qwen3-0.6b-dev0.log`
+
+**Output**:
+```
+Hardware: 4x P300C
+
+Using active stack: qwen3-0.6b-p100
+
+Starting vLLM server:
+  Model: Qwen3-0.6B
+  Port: 8000
+  Target device: 0
+  TT_VISIBLE_DEVICES: 0
+  TT_METAL_CACHE: /home/user/.cache/tt_metal_0
+  TT_MESH_GRAPH_DESC_PATH: .../single_device_0.textproto
+
+🚀 Server started in background
+✓ Server started successfully (PID: 12345)
+```
+
+**Why**: Device isolation ensures each server only accesses its assigned chip, avoiding conflicts.
+
+---
+
+### Recipe: Deploying on All Devices Simultaneously
+
+**Use case**: You want to maximize throughput by running independent servers on all 4 chips.
+
+**Prerequisites**:
+- 4-chip system
+- Model downloaded
+- Stack configured for single-chip mode
+
+**Commands**:
+```bash
+# Start servers on all 4 devices
+tt serve start Qwen3-0.6B --port 8000 --device-id 0 --detach
+tt serve start Qwen3-0.6B --port 8001 --device-id 1 --detach
+tt serve start Qwen3-0.6B --port 8002 --device-id 2 --detach
+tt serve start Qwen3-0.6B --port 8003 --device-id 3 --detach
+
+# Check all servers
+tt status
+```
+
+**What happens**:
+- Each server gets isolated to its device via `TT_VISIBLE_DEVICES`
+- Each has separate cache directory
+- Each has unique mesh descriptor
+- All run independently on different ports
+- No data-parallel coordination overhead
+
+**Output**:
+```
+🚀 Running Servers
+   Total: 4 server(s)
+   Ready: 4 | Initializing: 0
+
+   ✓ Port 8000 (device 0): READY
+   ✓ Port 8001 (device 1): READY
+   ✓ Port 8002 (device 2): READY
+   ✓ Port 8003 (device 3): READY
+```
+
+**Performance**:
+- **4x throughput**: Each device runs at full capacity
+- **No coordination overhead**: No data-parallel synchronization
+- **Independent scaling**: Each server has its own request queue
+- **Fault isolation**: One device failing doesn't affect others
+
+**Why**: Ideal for maximizing aggregate throughput across all chips.
+
+---
+
+### Recipe: Testing Multi-Device Deployment
+
+**Use case**: You want to verify all 4 servers are working correctly.
+
+**Prerequisites**:
+- 4 servers running on ports 8000-8003
+
+**Commands**:
+```bash
+# Test each server with simple inference request
+for port in 8000 8001 8002 8003; do
+  echo "=== Testing device on port $port ==="
+  curl -s http://localhost:$port/v1/completions \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"model\": \"/home/user/models/Qwen3-0.6B\",
+      \"prompt\": \"Hello from device $port!\",
+      \"max_tokens\": 10
+    }" | jq '.choices[0].text'
+  echo
+done
+```
+
+**Expected output**:
+```
+=== Testing device on port 8000 ===
+" I'm a test server running..."
+
+=== Testing device on port 8001 ===
+" This is device 1 responding..."
+
+=== Testing device on port 8002 ===
+" Device 2 online and ready..."
+
+=== Testing device on port 8003 ===
+" Server 3 is operational..."
+```
+
+**Load balancing test**:
+```bash
+# Send concurrent requests to all devices
+for i in {1..10}; do
+  port=$((8000 + i % 4))
+  curl -s http://localhost:$port/v1/completions \
+    -H "Content-Type: application/json" \
+    -d '{"model": "/home/user/models/Qwen3-0.6B", "prompt": "Test", "max_tokens": 5}' &
+done
+wait
+
+echo "All 10 requests completed across 4 devices"
+```
+
+**Why**: Verifies device isolation is working and servers can handle concurrent load.
+
+---
+
+### Recipe: Switching Between Single-Chip and Multi-Chip Modes
+
+**Use case**: You want to toggle between "all devices" (data parallel) and "per device" (independent servers).
+
+**Prerequisites**:
+- Multiple stack configurations defined
+- Servers can be stopped/started
+
+**Multi-chip mode (data parallel)**:
+```bash
+# Stop all per-device servers
+tt stop Qwen3-0.6B --device-id 0
+tt stop Qwen3-0.6B --device-id 1
+tt stop Qwen3-0.6B --device-id 2
+tt stop Qwen3-0.6B --device-id 3
+
+# Switch to multi-chip stack
+tt stack use qwen3-0.6b-p150x4
+
+# Start single server using all devices
+tt serve start Qwen3-0.6B --detach
+```
+
+**Single-chip mode (per device)**:
+```bash
+# Stop multi-chip server
+tt stop Qwen3-0.6B
+
+# Switch to single-chip stack
+tt stack use qwen3-0.6b-p100
+
+# Start independent servers
+tt serve start Qwen3-0.6B --port 8000 --device-id 0 --detach
+tt serve start Qwen3-0.6B --port 8001 --device-id 1 --detach
+tt serve start Qwen3-0.6B --port 8002 --device-id 2 --detach
+tt serve start Qwen3-0.6B --port 8003 --device-id 3 --detach
+```
+
+**Stack configurations**:
+
+Multi-chip (`qwen3-0.6b-p150x4`):
+```yaml
+stacks:
+  qwen3-0.6b-p150x4:
+    description: 'Qwen3 0.6B on P150X4 (4-chip data parallel)'
+    metal: v0.66.0-rc7
+    model: Qwen3-0.6B
+    hardware: P150X4
+    config:
+      max_model_len: 4096
+      max_num_seqs: 64  # 16 * 4 for data parallel
+      data_parallel: 4
+    override_tt_config:
+      data_parallel: 4
+```
+
+Single-chip (`qwen3-0.6b-p100`):
+```yaml
+stacks:
+  qwen3-0.6b-p100:
+    description: 'Qwen3 0.6B on P150 (single chip per instance)'
+    metal: v0.66.0-rc7
+    model: Qwen3-0.6B
+    hardware: P150
+    config:
+      max_model_len: 2048
+      max_num_seqs: 16
+      tensor_parallel: 1
+```
+
+**Why**: Different workloads benefit from different modes:
+- **Data parallel (multi-chip)**: Better for large batch inference
+- **Independent (per-chip)**: Better for maximum throughput with small batches
+
+---
+
+**Key flags for automation**:
+- `--yes`: Skip confirmation prompts
+- `--json`: Machine-readable output
+- `--recommended`: Show only compatible versions
+
+**Why**: Enables automated firmware management in CI/CD pipelines.
+
+---
+
 ## Best Practices
 
 ### 1. Always Check Status First
@@ -1798,7 +2039,9 @@ Installing `uv` provides 10-100x faster environment operations with zero downsid
 | Model info | `tt model info <name>` |
 | **Servers** | |
 | Start vLLM server | `tt serve start <model> [--detach]` |
+| Start on specific device | `tt serve start <model> --device-id N --port P [--detach]` |
 | Stop server | `tt stop <model>` |
+| Stop device-specific | `tt stop <model> --device-id N` |
 | Server status | `tt serve status [--json]` |
 | **Environment** | |
 | Check environment | `tt env check` |
