@@ -77,6 +77,13 @@ def create_parser():
         help='Maximum model context length',
     )
     start_parser.add_argument(
+        '--max-num-seqs',
+        type=int,
+        default=None,
+        dest='max_num_seqs',
+        help='Maximum number of sequences to process in parallel',
+    )
+    start_parser.add_argument(
         '--tensor-parallel',
         type=int,
         default=None,
@@ -101,6 +108,13 @@ def create_parser():
         default=None,
         dest='pid_dir',
         help='PID file directory',
+    )
+    start_parser.add_argument(
+        '--device-id',
+        type=int,
+        default=None,
+        dest='device_id',
+        help='Specific device ID to use (0-3 for 4-chip system). If not specified, uses all devices.',
     )
     start_parser.set_defaults(func=serve.start)
 
@@ -140,6 +154,20 @@ def create_parser():
         '--all',
         action='store_true',
         help='Stop all servers',
+    )
+    stop_parser.add_argument(
+        '--device-id',
+        type=int,
+        default=None,
+        dest='device_id',
+        help='Specific device ID (for single-device instances)',
+    )
+    stop_parser.add_argument(
+        '--pid-dir',
+        type=str,
+        default=None,
+        dest='pid_dir',
+        help='PID file directory',
     )
     stop_parser.set_defaults(func=serve.stop)
 

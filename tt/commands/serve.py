@@ -85,13 +85,14 @@ def normalize_model_name(model_name: str) -> str:
     return model_name.lower().replace('_', '-')
 
 
-def get_pid_file(model_name: str, pid_dir: Optional[Path] = None) -> Path:
+def get_pid_file(model_name: str, pid_dir: Optional[Path] = None, device_id: Optional[int] = None) -> Path:
     """
     Get PID file path for a model.
 
     Args:
         model_name: Model name
         pid_dir: Directory for PID files (default: ~/.tt/servers)
+        device_id: Device ID (for single-device instances)
 
     Returns:
         Path to PID file
@@ -103,10 +104,12 @@ def get_pid_file(model_name: str, pid_dir: Optional[Path] = None) -> Path:
     pid_dir.mkdir(parents=True, exist_ok=True)
 
     normalized_name = normalize_model_name(model_name)
+    if device_id is not None:
+        return pid_dir / f"{normalized_name}-dev{device_id}.pid"
     return pid_dir / f"{normalized_name}.pid"
 
 
-def write_pid_file(model_name: str, pid: int, port: int, pid_dir: Optional[Path] = None) -> None:
+def write_pid_file(model_name: str, pid: int, port: int, pid_dir: Optional[Path] = None, device_id: Optional[int] = None) -> None:
     """
     Write PID file for running server.
 
@@ -115,30 +118,34 @@ def write_pid_file(model_name: str, pid: int, port: int, pid_dir: Optional[Path]
         pid: Process ID
         port: Server port
         pid_dir: Directory for PID files
+        device_id: Device ID (for single-device instances)
     """
-    pid_file = get_pid_file(model_name, pid_dir)
+    pid_file = get_pid_file(model_name, pid_dir, device_id)
 
     data = {
         'pid': pid,
         'port': port,
         'model': model_name,
     }
+    if device_id is not None:
+        data['device_id'] = device_id
 
     pid_file.write_text(json.dumps(data, indent=2))
 
 
-def read_pid_file(model_name: str, pid_dir: Optional[Path] = None) -> Optional[Dict]:
+def read_pid_file(model_name: str, pid_dir: Optional[Path] = None, device_id: Optional[int] = None) -> Optional[Dict]:
     """
     Read PID file for a model.
 
     Args:
         model_name: Model name
         pid_dir: Directory for PID files
+        device_id: Device ID (for single-device instances)
 
     Returns:
         Dictionary with pid, port, model or None if not found
     """
-    pid_file = get_pid_file(model_name, pid_dir)
+    pid_file = get_pid_file(model_name, pid_dir, device_id)
 
     if not pid_file.exists():
         return None
@@ -149,15 +156,16 @@ def read_pid_file(model_name: str, pid_dir: Optional[Path] = None) -> Optional[D
         return None
 
 
-def delete_pid_file(model_name: str, pid_dir: Optional[Path] = None) -> None:
+def delete_pid_file(model_name: str, pid_dir: Optional[Path] = None, device_id: Optional[int] = None) -> None:
     """
     Delete PID file for a model.
 
     Args:
         model_name: Model name
         pid_dir: Directory for PID files
+        device_id: Device ID (for single-device instances)
     """
-    pid_file = get_pid_file(model_name, pid_dir)
+    pid_file = get_pid_file(model_name, pid_dir, device_id)
     if pid_file.exists():
         pid_file.unlink()
 
@@ -244,24 +252,30 @@ def start(args: argparse.Namespace) -> int:
 
     # Check if already running
     pid_dir = Path(args.pid_dir) if (hasattr(args, 'pid_dir') and args.pid_dir) else DEFAULT_PID_DIR
-    existing = read_pid_file(args.model, pid_dir)
+    device_id = args.device_id if hasattr(args, 'device_id') else None
+    existing = read_pid_file(args.model, pid_dir, device_id)
     if existing:
         pid = existing['pid']
         try:
             # Check if process actually exists
             os.kill(pid, 0)
-            print(f"⚠️  Server already running (PID: {pid}, Port: {existing['port']})")
+            dev_str = f" on device {device_id}" if device_id is not None else ""
+            print(f"⚠️  Server already running{dev_str} (PID: {pid}, Port: {existing['port']})")
             print(f"   Stop it first: tt stop {args.model}")
             return 1
         except (OSError, ProcessLookupError):
             # Process doesn't exist, clean up stale PID file
-            delete_pid_file(args.model, pid_dir)
+            delete_pid_file(args.model, pid_dir, device_id)
 
     # Apply stack configuration if available
     max_num_seqs = None
     override_tt_config = {}
 
-    if stack_config and 'config' in stack_config:
+    # Check for command-line max_num_seqs first
+    if hasattr(args, 'max_num_seqs') and args.max_num_seqs is not None:
+        max_num_seqs = args.max_num_seqs
+        print(f"  Using command-line max_num_seqs: {max_num_seqs}")
+    elif stack_config and 'config' in stack_config:
         cfg = stack_config['config']
 
         # Get max_num_seqs from stack
@@ -269,6 +283,7 @@ def start(args: argparse.Namespace) -> int:
             max_num_seqs = cfg['max_num_seqs']
             print(f"  Using stack max_num_seqs: {max_num_seqs}")
 
+    if stack_config:
         # Get override_tt_config from stack
         if 'override_tt_config' in stack_config:
             override_tt_config = stack_config['override_tt_config']
@@ -333,9 +348,35 @@ def start(args: argparse.Namespace) -> int:
         env['TT_METAL_VLLM_OVERRIDE_CONFIG'] = json.dumps(override_tt_config)
         print(f"  Stack TT overrides: {override_tt_config}")
 
-    mesh_device = hardware.get_mesh_device()
-    if mesh_device:
+    # Handle device selection
+    if hasattr(args, 'device_id') and args.device_id is not None:
+        # Single device mode - set device ID and device isolation
+        device_id = args.device_id
+        if device_id < 0 or device_id >= device_count:
+            print(f"❌ Invalid device ID: {device_id} (available: 0-{device_count-1})")
+            return 1
+
+        # Device isolation environment variables
+        env['TT_VISIBLE_DEVICES'] = str(device_id)
+        env['TT_METAL_CACHE'] = str(Path.home() / '.cache' / f'tt_metal_{device_id}')
+
+        # Set mesh descriptor path for CUSTOM cluster type (textproto format)
+        mesh_desc_path = Path(os.environ.get('TT_METAL_HOME', str(Path.home() / 'tt-metal'))) / \
+            'generated' / 'fabric' / f'single_device_{device_id}.textproto'
+        env['TT_MESH_GRAPH_DESC_PATH'] = str(mesh_desc_path)
+
+        # Use P150 for single device mode (as per your hint)
+        mesh_device = 'P150'
         env['MESH_DEVICE'] = mesh_device
+        print(f"  Target device: {device_id}")
+        print(f"  TT_VISIBLE_DEVICES: {device_id}")
+        print(f"  TT_METAL_CACHE: {env['TT_METAL_CACHE']}")
+        print(f"  TT_MESH_GRAPH_DESC_PATH: {mesh_desc_path}")
+    else:
+        # Multi-device mode - use all devices
+        mesh_device = hardware.get_mesh_device()
+        if mesh_device:
+            env['MESH_DEVICE'] = mesh_device
 
     arch_name = hardware.get_arch_name()
     if arch_name:
@@ -391,7 +432,10 @@ def start(args: argparse.Namespace) -> int:
             # Redirect stdout/stderr to log file
             log_dir = pid_dir / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / f"{normalize_model_name(args.model)}.log"
+            log_name = normalize_model_name(args.model)
+            if device_id is not None:
+                log_name = f"{log_name}-dev{device_id}"
+            log_file = log_dir / f"{log_name}.log"
 
             with open(log_file, 'w') as f:
                 process = subprocess.Popen(
@@ -403,13 +447,14 @@ def start(args: argparse.Namespace) -> int:
                 )
 
             # Write PID file
-            write_pid_file(args.model, process.pid, port, pid_dir)
+            write_pid_file(args.model, process.pid, port, pid_dir, device_id)
 
             print(f"✓ Server started successfully")
             print(f"  PID: {process.pid}")
             print(f"  Log: {log_file}")
             print(f"\nCheck status: tt serve status")
-            print(f"Stop server: tt stop {args.model}")
+            dev_arg = f" --device-id {device_id}" if device_id is not None else ""
+            print(f"Stop server: tt stop {args.model}{dev_arg}")
 
         else:
             # Foreground mode - run directly
@@ -419,7 +464,7 @@ def start(args: argparse.Namespace) -> int:
             process = subprocess.Popen(cmd, env=env)
 
             # Write PID file
-            write_pid_file(args.model, process.pid, port, pid_dir)
+            write_pid_file(args.model, process.pid, port, pid_dir, device_id)
 
             try:
                 process.wait()
@@ -427,7 +472,7 @@ def start(args: argparse.Namespace) -> int:
                 print("\n\nStopping server...")
                 process.terminate()
                 process.wait(timeout=10)
-                delete_pid_file(args.model, pid_dir)
+                delete_pid_file(args.model, pid_dir, device_id)
                 print("✓ Server stopped")
 
         return 0
@@ -452,21 +497,24 @@ def stop(args: argparse.Namespace) -> int:
         Exit code (0 = success)
     """
     pid_dir = Path(args.pid_dir) if (hasattr(args, 'pid_dir') and args.pid_dir) else DEFAULT_PID_DIR
-    pid_info = read_pid_file(args.model, pid_dir)
+    device_id = args.device_id if hasattr(args, 'device_id') else None
+    pid_info = read_pid_file(args.model, pid_dir, device_id)
 
     if not pid_info:
-        print(f"⚠️  Server {args.model} is not running")
+        dev_str = f" on device {device_id}" if device_id is not None else ""
+        print(f"⚠️  Server {args.model}{dev_str} is not running")
         return 1
 
     pid = pid_info['pid']
     port = pid_info.get('port', 'unknown')
+    dev_str = f" on device {device_id}" if device_id is not None else ""
 
     try:
         # Check if process exists
         os.kill(pid, 0)
 
         # Send SIGTERM
-        print(f"Stopping server {args.model} (PID: {pid}, Port: {port})...")
+        print(f"Stopping server {args.model}{dev_str} (PID: {pid}, Port: {port})...")
         os.kill(pid, signal.SIGTERM)
 
         # Wait a bit for graceful shutdown
@@ -488,15 +536,15 @@ def stop(args: argparse.Namespace) -> int:
             pass
 
         # Clean up PID file
-        delete_pid_file(args.model, pid_dir)
+        delete_pid_file(args.model, pid_dir, device_id)
 
-        print(f"✓ Stopped server {args.model}")
+        print(f"✓ Stopped server {args.model}{dev_str}")
         return 0
 
     except (OSError, ProcessLookupError):
         # Process doesn't exist
         print(f"⚠️  Server process not found (cleaned up stale PID file)")
-        delete_pid_file(args.model, pid_dir)
+        delete_pid_file(args.model, pid_dir, device_id)
         return 0
 
 

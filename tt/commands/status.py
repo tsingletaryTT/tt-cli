@@ -4,9 +4,13 @@ Status command - Show comprehensive system status
 
 import json
 import os
+import subprocess
+import urllib.request
+import urllib.error
 from pathlib import Path
 
-from tt.utils import hardware, envmanager
+from tt.utils import hardware, envmanager, stack as stackutils
+from tt.commands import serve
 
 
 def status(args):
@@ -63,6 +67,69 @@ def status(args):
             'directory': str(models_dir),
             'exists': False,
         }
+
+    # Stack status
+    active_stack = stackutils.get_active_stack()
+    if active_stack:
+        stack_config = stackutils.get_stack(active_stack)
+        status_data['stack'] = {
+            'active': active_stack,
+            'model': stack_config.get('model', 'unknown'),
+            'hardware': stack_config.get('hardware', 'auto'),
+            'metal': stack_config.get('metal', 'unknown'),
+        }
+    else:
+        status_data['stack'] = {
+            'active': None,
+        }
+
+    # Server status
+    pid_dir = Path.home() / '.tt' / 'servers'
+    servers = []
+    if pid_dir.exists():
+        for pid_file in pid_dir.glob('*.pid'):
+            try:
+                pid_data = json.loads(pid_file.read_text())
+                pid = pid_data['pid']
+                port = pid_data.get('port', 'unknown')
+                device_id = pid_data.get('device_id')
+
+                # Check if process is alive
+                try:
+                    os.kill(pid, 0)
+                    running = True
+                except (OSError, ProcessLookupError):
+                    running = False
+                    continue
+
+                # Check API health
+                ready = False
+                if running and port != 'unknown':
+                    try:
+                        req = urllib.request.Request(
+                            f'http://localhost:{port}/health',
+                            headers={'User-Agent': 'tt-cli'}
+                        )
+                        with urllib.request.urlopen(req, timeout=2) as response:
+                            ready = response.status == 200
+                    except (urllib.error.URLError, TimeoutError, OSError):
+                        ready = False
+
+                servers.append({
+                    'pid': pid,
+                    'port': port,
+                    'device_id': device_id,
+                    'model': pid_data.get('model', 'unknown'),
+                    'running': running,
+                    'ready': ready,
+                })
+            except (json.JSONDecodeError, KeyError):
+                continue
+
+    status_data['servers'] = {
+        'count': len(servers),
+        'servers': servers,
+    }
 
     # Output format
     if args.json:
@@ -142,12 +209,60 @@ def _print_status_human(status_data: dict):
                 print(f"   • ... and {models['count'] - 5} more")
     print()
 
+    # Stack
+    print("📚 Active Stack")
+    stack = status_data.get('stack', {})
+    if stack.get('active'):
+        print(f"   ✓ {stack['active']}")
+        print(f"   • Model: {stack['model']}")
+        print(f"   • Hardware: {stack['hardware']}")
+        print(f"   • Metal: {stack['metal']}")
+    else:
+        print(f"   • No active stack")
+        print(f"   • Activate with: tt stack use <name>")
+    print()
+
+    # Servers
+    print("🚀 Running Servers")
+    servers_data = status_data.get('servers', {})
+    servers = servers_data.get('servers', [])
+
+    if not servers:
+        print("   • No servers running")
+        print("   • Start with: tt serve start <model>")
+    else:
+        # Count ready vs initializing
+        ready_count = sum(1 for s in servers if s['ready'])
+        init_count = len(servers) - ready_count
+
+        print(f"   Total: {len(servers)} server(s)")
+        print(f"   Ready: {ready_count} | Initializing: {init_count}")
+        print()
+
+        # Show each server
+        for server in sorted(servers, key=lambda s: s.get('port', 0)):
+            port = server['port']
+            device_id = server.get('device_id')
+            device_str = f"device {device_id}" if device_id is not None else "all devices"
+
+            if server['ready']:
+                status_icon = "✓"
+                status_text = "READY"
+            else:
+                status_icon = "⏳"
+                status_text = "INITIALIZING"
+
+            print(f"   {status_icon} Port {port} ({device_str}): {status_text}")
+
+    print()
+
     # Quick commands
     print("📌 Quick Commands")
-    print("   tt serve <model>     # Start vLLM server")
-    print("   tt env use <name>    # Switch environment")
-    print("   tt device test       # Test devices")
-    print("   tt model list        # List models")
+    print("   tt serve start <model>     # Start vLLM server")
+    print("   tt stack use <name>        # Switch stack")
+    print("   tt serve status            # Detailed server info")
+    print("   tt env use <name>          # Switch environment")
+    print("   tt device test             # Test devices")
     print()
     print("=" * 70)
     print()

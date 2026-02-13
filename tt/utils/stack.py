@@ -75,6 +75,43 @@ DEFAULT_STACKS = {
             'trace_region_size': 30000000,
         },
     },
+    # Qwen3-0.6B stacks
+    'qwen3-0.6b-p150x4': {
+        'description': 'Qwen3 0.6B on P150X4 (4-chip data parallel)',
+        'metal': 'v0.66.0-rc7',
+        'model': 'Qwen3-0.6B',
+        'hardware': 'P150X4',
+        'config': {
+            'max_model_len': 4096,
+            'max_num_seqs': 64,  # 16 * 4 for data parallel
+            'tensor_parallel': 1,
+            'data_parallel': 4,
+            'port': 8000,
+        },
+        'env_vars': {},
+        'override_tt_config': {
+            'data_parallel': 4,
+            'sample_on_device_mode': 'decode_only',
+            'trace_region_size': 33000000,
+        },
+    },
+    'qwen3-0.6b-p100': {
+        'description': 'Qwen3 0.6B on P150 (single chip per instance)',
+        'metal': 'v0.66.0-rc7',
+        'model': 'Qwen3-0.6B',
+        'hardware': 'P150',
+        'config': {
+            'max_model_len': 2048,
+            'max_num_seqs': 16,
+            'tensor_parallel': 1,
+            'port': 8000,
+        },
+        'env_vars': {},
+        'override_tt_config': {
+            'sample_on_device_mode': 'decode_only',
+            'trace_region_size': 33000000,
+        },
+    },
 }
 
 
