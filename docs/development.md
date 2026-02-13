@@ -1,8 +1,8 @@
-# CLAUDE.md - AI Assistant Guide
+# tt-cli Development Guide
 
-**Guide for Claude (or other AI assistants) working on tt-cli**
+**Architecture, patterns, and best practices for contributors**
 
-This document helps AI assistants understand the project context, architecture decisions, development workflow, and patterns to maintain consistency when contributing to tt-cli.
+This guide helps contributors understand the project context, design decisions, development workflow, and coding patterns to maintain consistency when working on tt-cli.
 
 ---
 
@@ -21,36 +21,35 @@ This document helps AI assistants understand the project context, architecture d
 
 ## Project Context
 
-### The Core Problem
+### What tt-cli Does
 
-Tenstorrent developers waste time maintaining throwaway scripts:
-- VSCode extension generates ~15+ scripts (~1,100 lines) for common tasks
-- Every developer has their own `~/tt-scratchpad/` with custom scripts
-- Scripts for: starting servers, activating environments, testing devices, downloading models
-- Each script is 100-300 lines of boilerplate that should be a single command
-
-### The Solution
-
-**tt-cli** is a unified command-line tool that eliminates throwaway scripts:
+**tt-cli** is a unified command-line tool for Tenstorrent hardware development:
 
 ```bash
-# Instead of: python ~/tt-scratchpad/start-vllm-server.py --model ~/models/Llama...
-tt serve llama-3.1-8b
+# System status at a glance
+tt status
 
-# Instead of: source ~/tt-scratchpad/activate-vllm-env.sh
-tt env use vllm
+# Environment management with version control
+tt env use metal@v0.66.0-rc7
 
-# Instead of: python ~/tt-scratchpad/test-multi-device.py
+# Hardware testing and management
 tt device test
+
+# Server deployment with smart defaults
+tt serve start llama-3.1-8b
+
+# Pre-configured deployment stacks
+tt stack use llama-3.1-8b-p150x4
 ```
 
 ### Project Goals
 
-1. **Eliminate script pollution** - Replace ~270 lines of scripts with simple commands
+1. **Unified interface** - Single tool for hardware, environments, models, and servers
 2. **Smart defaults** - Auto-detect hardware, set optimal parameters
 3. **Zero configuration** - Work out of the box with sensible defaults
-4. **Graceful degradation** - Fall back when optional tools unavailable
-5. **Fast iteration** - Python for rapid development (not Rust)
+4. **Version management** - Multiple TT-Metal versions side-by-side
+5. **Graceful degradation** - Fall back when optional tools unavailable
+6. **Fast iteration** - Python for rapid development
 
 ### Relationship to tt-jukebox
 
@@ -141,7 +140,7 @@ tt status               # Not: tt-status
 3. **Implement feature** - Make test pass
 4. **Run test (should pass)** - Verify implementation
 5. **Refactor** - Improve code while keeping tests green
-6. **Update cookbook** - Add usage recipe to COOKBOOK.md
+6. **Update cookbook** - Add usage recipe to docs/cookbook.md
 7. **Document** - Update README.md command reference
 
 #### Example: Adding a New Command
@@ -178,7 +177,7 @@ def download(args):
 # PASSED
 
 # Step 5: Refactor (if needed)
-# Step 6: Update cookbook (see COOKBOOK.md)
+# Step 6: Update cookbook (see docs/cookbook.md)
 # Step 7: Document (see README.md)
 ```
 
@@ -779,7 +778,7 @@ download_parser.add_argument('name', help='Model name')
 download_parser.set_defaults(func=model.download)
 ```
 
-4. **Update cookbook** (`COOKBOOK.md`):
+4. **Update cookbook** (`docs/cookbook.md`):
 ```markdown
 ### Recipe 30: Downloading Models
 
@@ -1145,9 +1144,10 @@ tt-cli/
 │   │   └── ...
 │   └── integration/            # Integration tests
 │       └── test_commands.py    # Includes firmware tests (NEW)
-├── COOKBOOK.md                 # Usage recipes (with firmware recipes)
-├── TESTING.md                  # Testing guide
-├── CLAUDE.md                   # This file
+└── docs/
+    ├── cookbook.md             # Usage recipes
+    ├── testing.md              # Testing guide
+    └── development.md          # This file
 └── README.md                   # User documentation
 ```
 
@@ -1204,11 +1204,10 @@ def test_something(mock_hardware_n150, capsys):
 
 ## Getting Help
 
-- **Project status**: See `STATUS.md`
+- **Project status**: See `docs/status.md`
 - **User guide**: See `README.md`
-- **Usage recipes**: See `COOKBOOK.md`
-- **Testing guide**: See `TESTING.md`
-- **Vision document**: See `TT_CLI_VISION.md`
+- **Usage recipes**: See `docs/cookbook.md`
+- **Testing guide**: See `docs/testing.md`
 
 ---
 

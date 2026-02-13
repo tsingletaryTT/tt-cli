@@ -2079,7 +2079,7 @@ Installing `uv` provides 10-100x faster environment operations with zero downsid
 ## Questions or Issues?
 
 - File issues: `/path/to/tt-cli/issues`
-- Read docs: `README.md`, `QUICKSTART.md`
-- Check status: `STATUS.md`
+- Read docs: `README.md`, `docs/quickstart.md`
+- Check status: `docs/status.md`
 
 **Remember**: The CLI is designed to eliminate one-off scripts. If you find yourself writing throwaway code, consider whether it should be a CLI command instead.

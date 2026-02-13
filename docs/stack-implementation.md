@@ -284,7 +284,7 @@ $ tt serve start
 **Modified Files:**
 - `tt/core/cli.py` - Added stack subparser
 - `README.md` - Added stack management documentation
-- `CLAUDE.md` - Will be updated with stack patterns
+- `docs/development.md` - Will be updated with stack patterns
 
 **Total Code:**
 - ~1,100 lines of new functionality

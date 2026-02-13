@@ -282,7 +282,7 @@ def test_new_feature_edge_case():
 
 ### 6. Update Cookbook
 
-Add recipe to `COOKBOOK.md` showing how users can use the new feature.
+Add recipe to `docs/cookbook.md` showing how users can use the new feature.
 
 ## Mocking Best Practices
 

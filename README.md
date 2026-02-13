@@ -1,1001 +1,257 @@
-# tt-cli: One Command to Rule Them All
-
-<div align="center">
+# tt-cli
 
 **Unified command-line interface for Tenstorrent hardware development**
 
-[![Tests](https://img.shields.io/badge/tests-88%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-121%20passing-brightgreen)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-90%25+-brightgreen)](tests/)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](setup.py)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Stop maintaining throwaway scripts. Start using `tt`.
+A single CLI tool for managing Tenstorrent hardware, environments, models, and servers.
 
-[Quick Start](#quick-start) • [Documentation](#documentation) • [Contributing](#contributing)
-
-</div>
-
----
-
-## The Problem
-
-Every Tenstorrent developer has a `~/tt-scratchpad/` directory full of scripts they don't want to maintain:
-
-```bash
-~/tt-scratchpad/
-├── start-vllm-server.py           # 200 lines just to start a server
-├── start-vllm-server-n150.py      # Same script, different hardware
-├── start-vllm-server-qwen.py      # Same script, different model
-├── setup-vllm-env.sh              # 50 lines of environment boilerplate
-├── activate-metal-env.sh          # More environment scripts
-├── test-multi-device.py           # Device testing wrapper
-├── download-model.py              # Model download logic
-└── ...15 more scripts...          # ~1,100 lines of throwaway code
-```
-
-**These scripts are all solving the same problems**:
-- Starting servers with the right arguments
-- Setting up environments with correct variables
-- Testing hardware is working
-- Managing models
-
-**You should write application code, not infrastructure boilerplate.**
-
-## The Solution
-
-`tt-cli` replaces ~270 lines of scripts with simple, memorable commands:
-
-```bash
-# ✨ Start a server (auto-detects hardware, sets optimal params)
-tt serve start llama-3.1-8b
-
-# ✨ Switch environments (handles conflicts automatically)
-tt env use vllm
-
-# ✨ Test your devices
-tt device test
-
-# ✨ Check model is valid
-tt model check Qwen3-0.6B
-
-# ✨ See everything at a glance
-tt status
-```
-
-**Before and after**:
-
-| Task | Before (scripts) | After (tt-cli) |
-|------|------------------|----------------|
-| Start vLLM server | `python ~/tt-scratchpad/start-vllm-server.py --model ~/models/Llama-3.1-8B --max-model-len 2048 --tensor-parallel 2 --max-num-seqs 16 ...` | `tt serve start llama-3.1-8b` |
-| Switch to tt-metal | `source ~/tt-scratchpad/activate-metal-env.sh` | `tt env use metal` |
-| Test 8 devices | `python ~/tt-scratchpad/test-multi-device.py` | `tt device test` |
-| Check model valid | `python ~/tt-scratchpad/validate-model.py Qwen3-0.6B` | `tt model check Qwen3-0.6B` |
-| System overview | `python ~/tt-scratchpad/show-status.py` | `tt status` |
-
----
-
-## Installation
-
-### Quick Start (Development)
-
-```bash
-# Clone and install
-git clone https://github.com/tenstorrent/tt-cli.git
-cd tt-cli
-pip install -e .
-
-# Verify installation
-tt --version
-tt status
-```
-
-### From PyPI (Coming Soon)
-
-```bash
-pip install tt-cli
-```
-
-### Optional: Install uv for 10-100x Faster Operations
-
-```bash
-# Install uv (optional but recommended)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Verify
-uv --version
-```
-
-When `uv` is installed, `tt` automatically uses it for venv operations. When not available, falls back to standard `venv`. **Zero configuration required.**
-
----
-
-## Quick Start
-
-### First Run
-
-```bash
-# Check everything is working
-$ tt status
-
-Hardware: N150 (Wormhole)
-  Devices: 1x N150
-  Firmware: v1.2.3
-  Status: ✓ Healthy
-
-Environment:
-  TT_METAL_HOME: /home/user/tt-metal
-  MESH_DEVICE: N150
-  PYTHONPATH: ✓ Configured
-  LD_LIBRARY_PATH: ✓ Configured
-
-Models:
-  Qwen3-0.6B (600M params)
-  Llama-3.1-8B-Instruct (8B params)
-```
-
-### Common Workflows
-
-**Daily development startup**:
 ```bash
 # Check system status
 tt status
 
-# Fix any environment issues
-tt env fix
+# Switch environments
+tt env use metal@v0.66.0-rc7
 
-# Test devices are working
+# Test devices
 tt device test
+
+# Start a server
+tt serve start llama-3.1-8b
+
+# Use pre-configured stacks
+tt stack use llama-3.1-8b-p150x4
 ```
 
-**Switch between projects**:
+## Installation
+
 ```bash
-# Working on tt-metal
-tt env use metal
+git clone https://github.com/tenstorrent/tt-cli.git
+cd tt-cli
+pip install -e .
 
-# Switch to TT-Forge
-tt env use forge
-
-# Switch to TT-XLA
-tt env use xla
+# Verify
+tt --version
+tt status
 ```
 
-**Model management**:
+## Core Features
+
+### Environment Management
+Switch between TT-Metal versions and frameworks with automatic conflict resolution:
+
 ```bash
-# List installed models
+tt env use metal                  # Use active TT-Metal version
+tt env use metal@v0.66.0-rc7      # Use specific version
+tt env check                      # Validate environment
+tt env fix                        # Auto-fix common issues
+```
+
+### TT-Metal Version Management
+Manage multiple TT-Metal installations side-by-side:
+
+```bash
+tt metal checkout --tag v0.66.0-rc7 --set-active
+tt metal list
+tt metal use v0.66.0-rc7
+```
+
+### Stack Management
+Pre-configured deployment setups combining Metal version, model, hardware, and server settings:
+
+```bash
+tt stack list                     # Show available stacks
+tt stack use llama-3.1-8b-p150x4  # Activate complete environment
+tt serve start                    # Start server with stack config
+```
+
+Default stacks:
+- `llama-3.1-8b-p150x4` - Coding-optimized (128K context, data parallel 4x)
+- `llama-3.3-70b-p150x4` - Best reasoning (128K context, higher quality)
+
+### Device Management
+Hardware info, testing, and firmware updates:
+
+```bash
+tt device info                    # Show hardware details
+tt device test                    # Test TTNN connectivity
+tt firmware current               # Check firmware versions
+tt firmware latest --flash        # Update to latest
+```
+
+### Server Management
+Start and manage vLLM servers with automatic hardware configuration:
+
+```bash
+tt serve start Qwen3-0.6B
+tt serve start Qwen3-0.6B --detach --port 8000
+tt serve status
+tt stop Qwen3-0.6B
+```
+
+Multi-device deployment (run independent servers on each chip):
+
+```bash
+tt serve start Qwen3-0.6B --port 8000 --device-id 0 --detach
+tt serve start Qwen3-0.6B --port 8001 --device-id 1 --detach
+tt serve start Qwen3-0.6B --port 8002 --device-id 2 --detach
+tt serve start Qwen3-0.6B --port 8003 --device-id 3 --detach
+```
+
+### Model Management
+Download, validate, and manage models:
+
+```bash
+tt model get Qwen/Qwen3-0.6B
 tt model list
-
-# Validate model
+tt model info Qwen3-0.6B
 tt model check Qwen3-0.6B
-
-# Get model details
-tt model info Llama-3.1-8B-Instruct
 ```
 
-**Hardware testing**:
-```bash
-# Get device info
-tt device info
-
-# Test devices (TTNN connectivity)
-tt device test
-```
-
----
-
-## Features
-
-### ✅ Phase 1: Core CLI (Implemented)
-
-#### 🖥️ Hardware Management
-- **Auto-detect devices** via tt-smi integration
-- **Multi-device support** (N150, N300, T3K, P100, Galaxy)
-- **Device testing** with TTNN CreateDevices/CloseDevices API
-- **Hardware info** with temperature, power, PCI details
+### Workflow Automation
+Pre-defined workflows for common tasks:
 
 ```bash
-$ tt device info
-
-Hardware Information:
-Type: N150 (Wormhole)
-Count: 1 device
-Firmware: v1.2.3
-
-Device 0:
-  PCI Bus: 0000:01:00.0
-  Temperature: 35.0°C
-  Power: 45.0W
-  Status: ✓ Healthy
+tt workflow run setup                      # Development environment setup
+tt workflow run test-model --model Qwen3-0.6B
+tt workflow run benchmark --model Qwen3-0.6B
 ```
-
-#### 🔧 Environment Management
-- **Hybrid venv approach** (uses `uv` when available, falls back to `venv`)
-- **Conflict detection** (TT-Forge vs tt-metal auto-handled)
-- **Auto-fix common issues** (missing vars, wrong paths)
-- **Multi-environment support** (tt-metal, vLLM, TT-Forge, TT-XLA)
-
-```bash
-$ tt env use metal
-
-export TT_METAL_HOME=/home/user/tt-metal
-export PYTHONPATH=/home/user/tt-metal
-export LD_LIBRARY_PATH=/opt/openmpi-v5.0.7-ulfm/lib:$LD_LIBRARY_PATH
-export MESH_DEVICE=N150
-
-✓ Environment configured for tt-metal
-
-# Apply to current shell:
-eval "$(tt env use metal)"
-```
-
-#### 📦 Model Management
-- **List installed models** with architecture and size
-- **Validate models** (check config.json, weights, tokenizer)
-- **Model info** with detailed config inspection
-
-```bash
-$ tt model list
-
-Available Models in ~/models:
-
-Qwen3-0.6B
-  Architecture: Qwen3ForCausalLM
-  Parameters: ~600M
-  Size: 1.2 GB
-
-Llama-3.1-8B-Instruct
-  Architecture: LlamaForCausalLM
-  Parameters: ~8B
-  Size: 16 GB
-```
-
-#### 📊 Status Dashboard
-- **At-a-glance overview** (hardware, environment, models)
-- **JSON output** for scripting and automation
-- **Health checks** (devices, paths, configurations)
-
-```bash
-$ tt status --json | jq '.hardware'
-
-{
-  "count": 1,
-  "primary_type": "N150",
-  "devices": [
-    {
-      "type": "N150",
-      "index": 0,
-      "temperature": 35.0,
-      "power": 45.0,
-      "pci_bus": "0000:01:00.0",
-      "firmware": "v1.2.3"
-    }
-  ]
-}
-```
-
-### 🎯 Phase 2: Advanced Features (✅ Complete)
-
-#### 🚀 Server Management (✅ Implemented)
-- **Start vLLM servers** with auto-detected hardware config
-- **Process management** (start, stop, status with CPU/memory)
-- **Smart defaults** (optimal context length, tensor parallelism, batch size)
-- **Background mode** (detached servers with log files)
-- **Multi-device support** (auto-configures tensor parallelism)
-
-```bash
-$ tt serve start Qwen3-0.6B --detach
-
-Hardware: 1x N150
-
-Starting vLLM server:
-  Model: Qwen3-0.6B
-  Port: 8000
-  max-model-len: 2048
-  tensor-parallel-size: 1
-  max-num-seqs: 32
-  MESH_DEVICE: N150
-
-🚀 Starting server in background...
-✓ Server started successfully
-  PID: 12345
-  Log: ~/.tt/servers/logs/qwen3-0.6b.log
-
-# Check status
-$ tt serve status
-
-Running Servers:
-
-  Qwen3-0.6B
-    PID: 12345
-    Port: 8000
-    CPU: 15.2%
-    Memory: 2048 MB
-
-# Stop server
-$ tt stop Qwen3-0.6B
-```
-
-**See**: [COOKBOOK.md](COOKBOOK.md) recipes 19-28 for server management workflows.
-
-#### 🎯 Multi-Device Deployment (✅ Implemented)
-- **Device isolation** - Run independent servers on each chip
-- **Per-device configuration** - Separate caches, ports, and logs
-- **Custom mesh descriptors** - Automatic generation for single-chip mode
-- **Concurrent deployment** - Start multiple servers simultaneously
-
-Deploy the same model on 4 separate chips, each with its own vLLM server:
-
-```bash
-# Start server on device 0 (port 8000)
-$ tt serve start Qwen3-0.6B --port 8000 --device-id 0 --detach
-
-Hardware: 4x P300C
-
-Using active stack: qwen3-0.6b-p100
-
-Starting vLLM server:
-  Model: Qwen3-0.6B
-  Port: 8000
-  Target device: 0
-  TT_VISIBLE_DEVICES: 0
-  TT_METAL_CACHE: ~/.cache/tt_metal_0
-  TT_MESH_GRAPH_DESC_PATH: .../single_device_0.textproto
-  MESH_DEVICE: P150 (single-chip mode)
-
-🚀 Server started in background (PID: 12345)
-
-# Start servers on remaining devices
-$ tt serve start Qwen3-0.6B --port 8001 --device-id 1 --detach
-$ tt serve start Qwen3-0.6B --port 8002 --device-id 2 --detach
-$ tt serve start Qwen3-0.6B --port 8003 --device-id 3 --detach
-
-# Check all servers
-$ tt status
-
-🚀 Running Servers
-   Total: 4 server(s)
-   Ready: 4 | Initializing: 0
-
-   ✓ Port 8000 (device 0): READY
-   ✓ Port 8001 (device 1): READY
-   ✓ Port 8002 (device 2): READY
-   ✓ Port 8003 (device 3): READY
-
-# Test each server
-$ curl http://localhost:8000/v1/models  # Device 0
-$ curl http://localhost:8001/v1/models  # Device 1
-...
-```
-
-**Key features**:
-- **Device isolation**: Each server uses `TT_VISIBLE_DEVICES` to see only its assigned chip
-- **Separate caches**: Each device has its own `TT_METAL_CACHE` directory
-- **Custom mesh descriptors**: Automatic generation of single-chip mesh graph descriptors
-- **Per-device status**: `tt status` shows which device each server is using
-- **Independent scaling**: Each device runs independently with its own capacity
-
-**Environment variables per device**:
-```bash
-TT_VISIBLE_DEVICES=N                    # Isolate to device N
-TT_METAL_CACHE=~/.cache/tt_metal_N      # Separate cache per device
-TT_MESH_GRAPH_DESC_PATH=single_device_N.textproto  # Custom mesh descriptor
-MESH_DEVICE=P150                        # Single-chip mode
-TT_METAL_ARCH_NAME=blackhole            # Architecture
-```
-
-**Use cases**:
-- **Independent inference servers**: Load balance across 4 separate ports
-- **Multi-tenant deployment**: Isolate different users/workloads on different chips
-- **Development/testing**: Test different configurations simultaneously
-- **Maximum throughput**: Avoid data-parallel overhead, maximize per-chip utilization
-
-**See**: [COOKBOOK.md](COOKBOOK.md) recipes 29-32 for multi-device deployment workflows.
-
-#### 📥 Model Downloads (✅ Implemented)
-- **HuggingFace integration** using `huggingface_hub`
-- **Progress tracking** during downloads
-- **Automatic validation** after download
-- **Resume support** for interrupted downloads
-- **Gated model support** (Llama, etc. with HF token)
-
-```bash
-$ tt model get Qwen/Qwen3-0.6B
-
-📥 Downloading from HuggingFace Hub: Qwen/Qwen3-0.6B
-   Destination: /home/user/models/Qwen3-0.6B
-
-[Download progress...]
-
-✓ Download complete: /home/user/models/Qwen3-0.6B
-
-Validating model files...
-✓ Model validation passed
-
-# Download gated models
-$ tt model get meta-llama/Llama-3.1-8B-Instruct --token hf_your_token
-
-# Force re-download
-$ tt model get Qwen/Qwen3-0.6B --force
-```
-
-**See**: [COOKBOOK.md](COOKBOOK.md) recipes 13-18 for model download workflows.
-
-#### 🔄 Workflow Automation (Coming Soon)
-- **Pre-defined workflows** for common tasks
-- **Custom workflow support** (YAML config)
-- **Integration with tt-inference-server**
-
-```bash
-# Future commands
-tt workflow run training           # Run training workflow
-tt workflow run inference          # Run inference workflow
-tt workflow list                   # List available workflows
-```
-
----
 
 ## Documentation
 
-- **[COOKBOOK.md](COOKBOOK.md)** - 38 recipes for common workflows and troubleshooting
-- **[QUICKSTART.md](QUICKSTART.md)** - Installation and first steps
-- **[TESTING.md](TESTING.md)** - Testing guide (TDD workflow, 76 tests)
-- **[CLAUDE.md](CLAUDE.md)** - AI assistant guide (architecture, patterns, decisions)
-- **[STATUS.md](STATUS.md)** - Project status, metrics, and roadmap
-- **[TT_CLI_VISION.md](TT_CLI_VISION.md)** - Comprehensive vision document
-
----
+- **[Quick Start](docs/quickstart.md)** - Get up and running
+- **[Cookbook](docs/cookbook.md)** - Practical recipes and examples
+- **[Development Guide](docs/development.md)** - For contributors
+- **[Testing Guide](docs/testing.md)** - TDD workflow
+- **[Project Status](docs/status.md)** - Current state and roadmap
 
 ## Command Reference
 
-### Status
+### System Status
 ```bash
-tt status                     # Show everything (hardware, env, models)
-tt status --json              # Machine-readable output
+tt status                         # Overview of everything
+tt status --json                  # Machine-readable output
 ```
 
-### Environment Management
+### Environment & Version Management
 ```bash
-tt env list                        # List all virtual environments
-tt env use <name>                  # Switch environment (metal, vllm, forge, xla)
-tt env use metal@v0.66.0-rc7       # Use specific TT-Metal version
-tt env check                       # Validate current environment
-tt env fix                         # Auto-fix common issues (shows what would be fixed)
-eval "$(tt env fix --export)"      # Apply fixes to current shell
+tt env list                       # List environments
+tt env use <name>[@version]       # Switch environment
+tt env check                      # Validate environment
+tt env fix                        # Auto-fix issues
+
+tt metal list                     # Show TT-Metal installations
+tt metal checkout --tag <tag>     # Install new version
+tt metal use <version>            # Set active version
 ```
 
-### TT-Metal Installation Management
-Manage multiple TT-Metal versions side-by-side:
-
+### Stack Management
 ```bash
-# Checkout and build a specific version
-tt metal checkout --tag v0.66.0-rc7                 # Full automated install
-tt metal checkout --tag v0.66.0-rc7 --path ~/custom # Custom path
-tt metal checkout --tag v0.66.0-rc7 --set-active    # Set as active version
-
-# List installed versions
-tt metal list                      # Show all installations
-tt metal list --json               # JSON output
-
-# Set active version
-tt metal use v0.66.0-rc7           # Set as default for `tt env use metal`
-
-# Show installation details
-tt metal info v0.66.0-rc7          # Show paths, status, environments
-tt metal info v0.66.0-rc7 --json   # JSON output
-
-# Rebuild an installation
-tt metal build v0.66.0-rc7         # Rebuild (after code changes)
-tt metal build v0.66.0-rc7 --clean # Clean build
-
-# Fix/recreate environments
-tt metal setup v0.66.0-rc7         # Recreate python_env and vLLM env
-tt metal setup v0.66.0-rc7 --vllm-only  # Only vLLM env
-
-# Remove installation
-tt metal remove v0.66.0-rc7        # Remove (with confirmation)
-tt metal remove v0.66.0-rc7 --yes  # Skip confirmation
+tt stack list                     # Show available stacks
+tt stack use <name>               # Activate stack
+tt stack info <name>              # Show stack details
+tt stack create <name>            # Create custom stack
 ```
-
-**Use version-specific environments**:
-```bash
-# Use active version
-tt env use metal
-
-# Use specific version
-tt env use metal@v0.66.0-rc7
-
-# Multiple versions for testing
-tt env use metal@v0.66.0-rc7    # Test with RC7
-tt env use metal@v0.65.0        # Test with older version
-```
-
-**Typical workflow for managing versions**:
-```bash
-# Install new version
-tt metal checkout --tag v0.66.0-rc7 --set-active
-
-# Verify it works
-tt env use metal@v0.66.0-rc7
-tt device test
-
-# Keep old version for comparison
-tt metal list
-✓ v0.66.0-rc7 (active)
-• v0.65.0
-
-# Switch back if needed
-tt metal use v0.65.0
-tt env use metal
-```
-
-### Stack Management (tt-jukebox style)
-Stacks are pre-configured deployment setups combining TT-Metal version, model, hardware config, and server settings:
-
-```bash
-# List available stacks
-tt stack list                        # Show all stacks (default + custom)
-tt stack list --json                 # JSON output
-
-# Show stack details
-tt stack info llama-3.1-8b-p150x4    # Full configuration details
-tt stack info llama-3.1-8b-p150x4 --json
-
-# Activate a stack
-tt stack use llama-3.1-8b-p150x4     # Sets up complete environment
-tt stack use llama-3.1-8b-p150x4 --force  # Skip warnings
-
-# Create custom stack
-tt stack create my-coding-stack      # Interactive creation
-tt stack create my-stack --from-json config.json  # From file
-
-# Remove custom stack
-tt stack remove my-coding-stack      # With confirmation
-tt stack remove my-coding-stack --yes  # Skip confirmation
-```
-
-**Default stacks included**:
-- `llama-3.1-8b-p150x4` - Llama 3.1 8B Instruct on P150X4 (coding-optimized, COMPLETE status)
-  - 128K context, data parallel 4x, decode-only sampling
-  - Best for coding tasks on P300C/P150X4 hardware
-
-- `llama-3.3-70b-p150x4` - Llama 3.3 70B Instruct on P150X4 (best reasoning, FUNCTIONAL status)
-  - 128K context, better quality for complex reasoning
-  - Requires more resources
-
-**Typical stack workflow**:
-```bash
-# 1. Activate stack (one command sets up everything)
-tt stack use llama-3.1-8b-p150x4
-
-# 2. Verify environment is configured
-tt status
-
-# 3. Start server (uses stack configuration automatically)
-tt serve start
-
-# 4. Server runs with stack's optimal settings
-# - Model: meta-llama/Llama-3.1-8B-Instruct
-# - Metal: v0.66.0-rc7
-# - max_model_len: 128000
-# - max_num_seqs: 128 (32×4 for data parallel)
-# - data_parallel: 4
-# - sample_on_device_mode: decode_only
-```
-
-**Creating a custom stack** (example JSON):
-```json
-{
-  "description": "My custom development stack",
-  "metal": "v0.66.0-rc7",
-  "model": "meta-llama/Llama-3.1-8B-Instruct",
-  "hardware": "P150X4",
-  "config": {
-    "max_model_len": 64000,
-    "max_num_seqs": 64,
-    "port": 8001
-  },
-  "env_vars": {
-    "VLLM_ALLOW_LONG_MAX_MODEL_LEN": "1"
-  },
-  "override_tt_config": {
-    "data_parallel": 4,
-    "sample_on_device_mode": "decode_only"
-  }
-}
-```
-
-**What stacks solve**:
-- ✓ One command to switch complete deployment configs
-- ✓ Reproducible setups across team members
-- ✓ Hardware-optimized settings from tt-inference-server
-- ✓ Version management (test with v0.66 vs v0.65)
-- ✓ No more manual environment configuration
 
 ### Device Management
 ```bash
-tt device info                # Show hardware information
-tt device info --json         # JSON output
-tt device test                # Test TTNN device connectivity
+tt device info                    # Hardware information
+tt device test                    # Test connectivity
 ```
 
 ### Firmware Management
 ```bash
-# Check current firmware
-tt firmware current                       # Show firmware on all devices
-tt firmware current --json                # JSON output
-
-# List available firmware
-tt firmware list                          # List all available versions
-tt firmware list --recommended            # Show only recommended for your hardware
-tt firmware list --json                   # JSON output
-
-# Show latest firmware
-tt firmware latest                        # Show latest available version
-tt firmware latest --recommended          # Show latest recommended for hardware
-
-# Download firmware
-tt firmware download 19.4.2               # Download specific version
-tt firmware download 19.4.2 --output /path/to/file  # Custom location
-
-# Flash firmware
-tt firmware flash 19.4.2                  # Flash firmware (with confirmation)
-tt firmware flash 19.4.2 --yes            # Skip confirmation (for automation)
-tt firmware flash /path/to/bundle.fwbundle  # Flash from local file
-tt firmware flash 19.4.2 --force          # Force ROM update
-tt firmware flash 19.4.2 --no-reset       # Don't reset after flash
-tt firmware flash 19.4.2 --allow-downgrades  # Allow major version downgrades
-
-# Verify firmware
-tt firmware verify                        # Verify current firmware
-tt firmware verify 19.4.2                 # Verify against specific version
-
-# Update to latest (one command)
-tt firmware latest --flash                # Download and flash latest
-tt firmware latest --flash --yes          # Skip all prompts (for CI)
-tt firmware latest --flash --recommended  # Use latest recommended for hardware
-```
-
-**Hardware-aware recommendations**: The CLI detects your hardware and provides firmware compatibility recommendations:
-- **Blackhole** (P100/P150/P300C): Recommends 19.4.0+ for optimal support
-- **Wormhole** (N150/N300): Recommends 19.0.0+ for compatibility
-
-**Important**: Recommendations are advisory only. The CLI never blocks firmware operations - you always have full control. Warnings are shown to help you make informed decisions.
-
-**Example workflow**:
-```bash
-# 1. Check current firmware
-tt firmware current
-
-# 2. See what's available
-tt firmware list --recommended
-
-# 3. Update to latest recommended
-tt firmware latest --flash --recommended
-
-# 4. Verify installation
-tt firmware verify
-
-# 5. Test devices
-tt device test
+tt firmware current               # Show current versions
+tt firmware list                  # List available versions
+tt firmware latest --flash        # Update to latest
 ```
 
 ### Model Management
 ```bash
-tt model get <repo>           # Download model from HuggingFace
-tt model download <repo>      # Alias for get
-tt model get <repo> --token <token>  # Download gated model
-tt model get <repo> --force   # Force re-download
-tt model list                 # List installed models
-tt model info <name>          # Show model details
-tt model check <name>         # Validate model (config, weights, tokenizer)
+tt model get <repo>               # Download from HuggingFace
+tt model list                     # List installed models
+tt model info <name>              # Show details
+tt model check <name>             # Validate files
 ```
 
 ### Server Management
 ```bash
-# Start vLLM servers
-tt serve start <model>                    # Start vLLM server (foreground)
-tt serve start <model> --detach           # Start in background
-tt serve start <model> --port 8001        # Custom port
-tt serve start <model> --max-model-len 4096  # Override context length
-tt serve start <model> --tensor-parallel 2   # Override parallelism
-
-# Manage running servers
-tt serve status                           # Show all running servers
-tt serve status --json                    # JSON output with CPU/memory
-tt stop <model>                           # Stop specific server
-tt restart <model>                        # Restart server
+tt serve start <model>            # Start vLLM server
+tt serve start <model> --detach   # Background mode
+tt serve status                   # Show running servers
+tt stop <model>                   # Stop server
 ```
 
-### Workflow Automation
+### Workflows
 ```bash
-# List available workflows
-tt workflow list                          # Show all workflows
-tt workflow info setup                    # Show workflow details
-
-# Run workflows
-tt workflow run setup                     # Development environment setup
-tt workflow run test-model --model Qwen3-0.6B  # Complete model testing
-tt workflow run test-model --model Qwen3-0.6B --quick  # Quick validation only
-tt workflow run benchmark --model <name>  # Performance benchmarks
-tt workflow run eval --model <name> --eval-suite mmlu  # Run evaluations
-
-# Dry run mode (preview without executing)
-tt workflow run setup --dry-run           # Show what would be done
+tt workflow list                  # Show available workflows
+tt workflow run <name>            # Execute workflow
 ```
 
-### Configuration Management
+### Configuration
 ```bash
-# View configuration
-tt config list                            # Show all config values
-tt config list --json                     # JSON output
-tt config get models_dir                  # Get specific value
-tt config get server.default_port         # Get nested value
-
-# Update configuration
-tt config set models_dir ~/my-models      # Set custom models directory
-tt config set server.default_port 9000    # Set default port
-tt config reset                           # Reset to defaults
+tt config list                    # Show all config values
+tt config get <key>               # Get specific value
+tt config set <key> <value>       # Update value
 ```
-
----
 
 ## Architecture
 
-### Project Structure
+Built with:
+- **Python 3.9+** - No external dependencies for core functionality
+- **Hybrid uv/venv** - Fast when available, portable always
+- **Test-driven** - 121 tests, 90%+ coverage
+- **Zero config** - Smart defaults, auto-detection
 
-```
-tt-cli/
-├── tt/
-│   ├── core/
-│   │   └── cli.py           # Main CLI entry point, argument parsing
-│   ├── commands/
-│   │   ├── status.py        # tt status
-│   │   ├── env.py           # tt env *
-│   │   ├── device.py        # tt device *
-│   │   ├── model.py         # tt model *
-│   │   └── serve.py         # tt serve * (Phase 2)
-│   ├── integrations/
-│   │   └── (future)         # tt-jukebox, tt-inference-server
-│   └── utils/
-│       ├── hardware.py      # Hardware detection (tt-smi wrapper)
-│       └── envmanager.py    # Environment management (hybrid uv/venv)
-├── tests/
-│   ├── conftest.py          # Shared fixtures (15+ fixtures)
-│   ├── unit/                # Unit tests (50 tests)
-│   └── integration/         # Integration tests (14 tests)
-└── setup.py                 # Package metadata
-```
-
-### Design Decisions
-
-**Why Python?**
-- Fast iteration (built 1,500 lines in ~2 hours)
-- Direct API access (import ttnn, torch, etc.)
-- I/O-bound workloads (subprocess, file reads)
-- Team familiarity (ML/AI lingua franca)
-
-**Why Zero Dependencies?**
-- Works on any Python 3.9+ system
-- No dependency hell
-- Fast cold start
-- Maximum reliability
-
-**Why Hybrid uv/venv?**
-- Speed when available (10-100x faster)
-- Portability when not (built-in venv fallback)
-- Zero user configuration
-- Proven in production (tt-inference-server)
-
----
+Key design principles:
+1. Zero dependencies (stdlib only)
+2. Smart defaults (auto-detect hardware)
+3. Graceful degradation (fallbacks when tools missing)
+4. Fast iteration (Python for rapid development)
 
 ## Development
 
-### Test-Driven Development
-
-**We practice TDD for all features.**
-
-Test suite includes:
-- **64 tests** (100% passing)
-- **Unit tests** - `tests/unit/` for hardware, envmanager
-- **Integration tests** - `tests/integration/` for CLI commands
-- **Fixtures** - `tests/conftest.py` with shared mocks
-
 ```bash
-# Install development dependencies
+# Install dev dependencies
 pip install -e .
 pip install -r requirements-dev.txt
 
-# Run all tests
+# Run tests
 pytest
 
-# Run with coverage
-pytest --cov=tt --cov-report=html
-
-# Run specific test file
-pytest tests/unit/test_hardware.py
-
-# Run tests matching pattern
-pytest -k "test_detect_hardware"
-```
-
-### Adding New Features
-
-1. **Write tests first** (TDD workflow)
-2. **Implement feature** to pass tests
-3. **Update cookbook** with usage recipes
-4. **Document in README** command reference
-
-See [CLAUDE.md](CLAUDE.md) for detailed development guide.
-
-### Code Quality
-
-```bash
 # Format code
 black tt/
-
-# Lint code
 ruff check tt/ --fix
-
-# Type check (optional)
-mypy tt/
 ```
 
----
-
-## Building on tt-jukebox
-
-This CLI builds on [tt-jukebox](https://github.com/tenstorrent/tt-jukebox)'s solid foundation:
-- Hardware detection via tt-smi
-- Model spec matching (model → hardware compatibility)
-- Smart command generation
-
-And extends it to eliminate **all** throwaway scripts:
-- Server management (vLLM, inference servers)
-- Environment management (auto-conflict resolution)
-- Device management (testing, reset, monitoring)
-- Model management (download, validate, convert)
-
----
+See [Development Guide](docs/development.md) for detailed information.
 
 ## Requirements
 
-- **Python 3.9+** (built-in, no external dependencies)
-- **Optional:** `uv` for 10-100x faster environment operations
-- **Optional:** `tt-smi` for hardware detection
-- **Optional:** `textual` + `rich` for TUI interface (Phase 3)
+- **Python 3.9+**
+- **Optional**: `uv` for 10-100x faster environment operations
+- **Optional**: `tt-smi` for hardware detection
+- **Optional**: `tt-flash` for firmware updates
 
----
+## Project Status
 
-## Philosophy
+**Current**: Phase 3 Complete (121/121 tests passing)
 
-1. **Zero dependencies** - Core CLI uses only Python stdlib
-2. **Smart defaults** - Works without configuration
-3. **Graceful degradation** - Falls back when optional tools missing
-4. **Transparent** - Shows what it's doing (no magic)
-5. **Fast iteration** - Built in Python for rapid development
-6. **Test-driven** - 100% test coverage for all features
-7. **User experience first** - Clear errors, helpful messages
+- ✅ Phase 1: Core CLI (hardware, environment, models, devices)
+- ✅ Phase 2: Advanced features (server management, model downloads)
+- ✅ Phase 3: Workflow automation & configuration
+- 📅 Phase 4: Distribution & community (PyPI, TUI, plugins)
 
----
-
-## Troubleshooting
-
-### Quick Fixes
-
-**Hardware not detected**:
-```bash
-# Check tt-smi is installed
-which tt-smi
-tt-smi -s
-
-# Check PCI devices
-lspci | grep -i tenstorrent
-```
-
-**Environment issues**:
-```bash
-# Check for problems
-tt env check
-
-# Auto-fix common issues
-tt env fix
-
-# Re-activate environment
-eval "$(tt env use metal)"
-```
-
-**Import errors**:
-```bash
-# Verify PYTHONPATH
-echo $PYTHONPATH
-
-# Test import
-python -c "import ttnn; print('✓ TTNN imported')"
-```
-
-See [COOKBOOK.md](COOKBOOK.md) for 28 troubleshooting recipes.
-
----
-
-## Roadmap
-
-### Phase 1: Core CLI ✅ Complete (Jan 2026)
-- ✅ Hardware detection and device management
-- ✅ Environment management with conflict handling
-- ✅ Model management (list, info, validate)
-- ✅ Status dashboard with JSON output
-- ✅ Test suite (88 tests, 100% passing)
-- ✅ Comprehensive documentation
-
-### Phase 2: Advanced Features ✅ Complete (Jan 2026)
-- ✅ **Server management** (vLLM start/stop/status with auto-config)
-- ✅ **Model downloads** (HuggingFace integration with progress & validation)
-- ✅ **88/88 tests passing** with comprehensive coverage
-- [ ] Workflow automation (tt-inference-server integration) - moved to Phase 3
-- [ ] Configuration file support (~/.ttconfig) - moved to Phase 3
-
-### Phase 3: Workflow Integration & Polish ✅ Complete (Jan 2026)
-- ✅ **Workflow automation** (`tt workflow run setup/test-model/benchmark/eval`)
-- ✅ **Configuration file support** (`~/.ttconfig` for user preferences)
-- ✅ **121/121 tests passing** with comprehensive coverage
-- ✅ **TT hardware compatibility** (DeepSeek-R1-Distill-Llama-70B on P300 Blackhole)
-- ✅ **COOKBOOK updated** with 52 recipes including 8 workflow examples
-
-### Phase 4: Distribution & Community 📅 Future (Q2 2026)
-- [ ] PyPI release (pip install tt-cli)
-- [ ] TUI interface (textual + rich)
-- [ ] Plugin system for extensibility
-- [ ] Bash/Zsh completion
-- [ ] Performance optimization (if needed)
-
----
-
-## Project Metrics
-
-| Metric | Value |
-|--------|-------|
-| Lines of Code | 3,200+ |
-| Tests | 121 (100% passing) |
-| Coverage | 90%+ |
-| Dependencies | 0 (stdlib only, PyYAML optional) |
-| Python Version | 3.9+ |
-| Commands | 23 implemented |
-| Workflows | 4 (setup, test-model, benchmark, eval) |
-| Scripts Eliminated | ~15 scripts (~880 lines) |
-
----
-
-## Contributing
-
-Contributions welcome! We follow test-driven development:
-
-1. Write tests first
-2. Implement feature
-3. Update documentation (COOKBOOK.md + README.md)
-4. Submit PR
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
-
----
+See [Project Status](docs/status.md) for detailed roadmap.
 
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
 
----
-
 ## Credits
 
-Built with ❤️ by the Tenstorrent community.
+Built by the Tenstorrent community.
 
-Special thanks to [tt-jukebox](https://github.com/tenstorrent/tt-jukebox) for the foundation.
-
----
-
-<div align="center">
-
-**Stop writing throwaway scripts. Start using `tt`.** 🚀
-
-[Installation](#installation) • [Quick Start](#quick-start) • [Documentation](#documentation)
-
-</div>
-# tt-cli
+Foundation provided by [tt-jukebox](https://github.com/tenstorrent/tt-jukebox).

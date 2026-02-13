@@ -77,8 +77,9 @@
 │       └── app.py          # TUI stub
 ├── setup.py
 ├── README.md
-├── QUICKSTART.md
-├── STATUS.md (this file)
+└── docs/
+    ├── quickstart.md
+    └── status.md (this file)
 └── requirements.txt
 ```
 
@@ -337,7 +338,7 @@ def create_venv(path, python_version=None):
 2. **Eval pattern:** `eval "$(tt env use vllm --export)"` (Phase 2)
 3. **Shell integration:** Source script that wraps `tt` (Phase 3)
 
-**Status:** Documented in QUICKSTART.md, eval pattern coming in Phase 2
+**Status:** Documented in docs/quickstart.md, eval pattern coming in Phase 2
 
 ### Server Management ✅ IMPLEMENTED
 
@@ -534,7 +535,7 @@ ps aux | grep "tt status"
 ## Resources
 
 - **Code:** `~/tt-cli/`
-- **Docs:** `README.md`, `QUICKSTART.md`
+- **Docs:** `README.md`, `docs/quickstart.md`
 - **Vision:** `~/tt-vscode-toolkit/TT_CLI_VISION.md`
 - **tt-jukebox:** `~/tt-vscode-toolkit/vendor/tt-jukebox/`
 
