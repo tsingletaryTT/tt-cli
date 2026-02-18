@@ -317,6 +317,7 @@ def start(args: argparse.Namespace) -> int:
     cmd = [
         python_cmd, '-m', 'vllm.entrypoints.openai.api_server',
         '--model', str(model_path),
+        '--served-model-name', args.model,  # Expose model with its short name
         '--port', str(port),
         '--max-model-len', str(max_model_len),
         '--max-num-seqs', str(max_num_seqs),
