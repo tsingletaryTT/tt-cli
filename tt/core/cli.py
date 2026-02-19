@@ -678,7 +678,11 @@ def create_parser():
     # tt model list
     list_model_parser = model_subparsers.add_parser(
         'list',
-        help='List installed models',
+        help='List installed models (and optionally show available models)',
+    )
+    list_model_parser.add_argument(
+        '--device',
+        help='Also show available models for device type (e.g., P150X4, N300)',
     )
     list_model_parser.set_defaults(func=model.list_models)
 

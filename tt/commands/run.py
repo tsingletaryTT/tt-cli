@@ -18,7 +18,8 @@ import subprocess
 from pathlib import Path
 from typing import Optional, Dict
 
-from tt.utils import hardware, model_specs, compatibility
+from tt.utils import hardware, model_specs, compatibility, envmanager
+from tt.commands import model as modelutils
 
 
 def find_model_path(model_name: str, models_dir: Optional[Path] = None) -> Optional[Path]:
@@ -113,34 +114,35 @@ def run_command(args):
         print(f"  MESH_DEVICE: {mesh_device}")
     print()
 
-    # Step 2: Fetch model spec from tt-inference-server
-    print("🌐 Fetching model specs from tt-inference-server...")
+    # Step 2: Try to fetch model spec from tt-inference-server
+    # Note: Specs are helpful but NOT required - custom models should work fine!
+    print("🌐 Checking for official model spec...")
 
+    spec = None
     try:
         spec = model_specs.get_model_spec(
             model_name,
             mesh_device or device_type,
             verbose=verbose
         )
-    except RuntimeError as e:
-        print(f"❌ Failed to fetch model specs: {e}")
-        sys.exit(1)
+    except Exception as e:
+        if verbose:
+            print(f"⚠️  Could not fetch specs: {e}")
 
-    if not spec:
-        print(f"❌ No compatible spec found for '{model_name}' on {mesh_device or device_type}")
+    if spec:
+        full_model_name = spec.get('model_name', model_name)
+        spec_id = spec.get('spec_id', 'unknown')
+
+        print(f"✓ Found official spec: {full_model_name}")
+        print(f"  Spec ID: {spec_id}")
+        print(f"  Device: {spec.get('device_type', 'unknown')}")
         print()
-        print("Try:")
-        print(f"  tt model search {model_name}")
-        print(f"  tt model list --device {mesh_device or device_type}")
-        sys.exit(1)
-
-    full_model_name = spec.get('model_name', model_name)
-    spec_id = spec.get('spec_id', 'unknown')
-
-    print(f"✓ Found spec: {full_model_name}")
-    print(f"  Spec ID: {spec_id}")
-    print(f"  Device: {spec.get('device_type', 'unknown')}")
-    print()
+    else:
+        # No spec found - that's okay! Use defaults.
+        print(f"ℹ️  No official spec found for '{model_name}'")
+        print(f"   Using sensible defaults (you can override with flags)")
+        print()
+        full_model_name = model_name
 
     # Step 3: Find model files
     print("📁 Looking for model files...")
@@ -151,6 +153,16 @@ def run_command(args):
     if model_path:
         print(f"✓ Found model: {model_path}")
         model_arg = str(model_path)
+
+        # Check for TT cache
+        cache_info = modelutils.detect_tt_cache(Path(model_path))
+        if cache_info['has_cache']:
+            print(f"  ✓ Found TT cache: {cache_info['device']} ({cache_info['tensor_count']} tensors, {cache_info['cache_size_mb']}MB)")
+
+            # Verify cache matches target hardware
+            if mesh_device and mesh_device != cache_info['device']:
+                print(f"  ⚠️  Warning: Cache is for {cache_info['device']}, but running on {mesh_device}")
+                print(f"     Model may fail or perform poorly.")
     else:
         # Use HuggingFace path from spec
         print(f"⚠️  Local model not found, will download from HuggingFace")
@@ -158,59 +170,99 @@ def run_command(args):
 
     print()
 
-    # Step 4: Check environment compatibility
-    print("🔧 Checking environment compatibility...")
+    # Step 4: Check environment compatibility (if we have a spec)
+    if spec:
+        print("🔧 Checking environment compatibility...")
 
-    compat = compatibility.check_environment_compatibility(spec, verbose=False)
+        compat = compatibility.check_environment_compatibility(spec, verbose=False)
 
-    if compat['all_match']:
-        print("✓ Environment matches spec requirements")
-    else:
-        print("⚠️  Environment differs from spec:")
-        print()
-
-        if not compat['metal_match']:
-            print(f"  tt-metal:")
-            print(f"    Current:  {compat['metal_current']}")
-            print(f"    Required: {compat['metal_required']}")
-
-        if not compat['vllm_match']:
-            print(f"  tt-vllm:")
-            print(f"    Current:  {compat['vllm_current']}")
-            print(f"    Required: {compat['vllm_required']}")
-
-        print()
-
-        if not force:
-            print("⚠️  This may not work as expected.")
-            print("   Use --force to run anyway, or update your environment.")
-            print()
-            print("Recommendations:")
-            for rec in compat['recommendations']:
-                print(f"  • {rec}")
-            sys.exit(1)
+        if compat['all_match']:
+            print("✓ Environment matches spec requirements")
         else:
-            print("⚠️  Running anyway (--force enabled)")
+            print("⚠️  Environment differs from spec (this may still work):")
+            print()
 
+            if not compat['metal_match']:
+                print(f"  tt-metal:")
+                print(f"    Current:  {compat['metal_current']}")
+                print(f"    Required: {compat['metal_required']}")
+
+            if not compat['vllm_match']:
+                print(f"  tt-vllm:")
+                print(f"    Current:  {compat['vllm_current']}")
+                print(f"    Required: {compat['vllm_required']}")
+
+            print()
+            print("  💡 This is just a heads-up, not an error.")
+            print("     The model may still work with your current environment.")
+            print()
+
+        print()
+    else:
+        # No spec, so no compatibility check needed
+        print("ℹ️  Skipping environment check (no spec available)")
+        print()
+
+    # Step 4.5: Validate vLLM patches
+    print("🔍 Validating vLLM patches...")
+    patch_status = envmanager.check_vllm_patches()
+
+    if patch_status['warnings']:
+        print()
+        print("⚠️  vLLM Patch Warnings:")
+        for warning in patch_status['warnings']:
+            print(f"   - {warning}")
+        print()
+        print("   These patches improve custom model support.")
+        print("   Your model may still work, but you might encounter issues.")
+        print("   See: ASCII_MODEL_SOLUTION.md for patch details")
+    else:
+        print("✓ All vLLM patches detected")
     print()
 
-    # Step 5: Start server with official parameters
-    print("🚀 Starting vLLM server with official parameters...")
+    # Step 5: Start server
+    if spec:
+        print("🚀 Starting vLLM server with official spec parameters...")
+    else:
+        print("🚀 Starting vLLM server with default parameters...")
     print()
 
-    # Extract vLLM arguments from spec
-    device_model_spec = spec.get('device_model_spec', {})
-    vllm_args = device_model_spec.get('vllm_args', {})
-    env_vars = device_model_spec.get('env_vars', {})
+    # Extract vLLM arguments from spec (or use sensible defaults)
+    if spec:
+        device_model_spec = spec.get('device_model_spec', {})
+        vllm_args = device_model_spec.get('vllm_args', {})
+        env_vars = device_model_spec.get('env_vars', {})
+    else:
+        # No spec - use sensible defaults
+        vllm_args = {
+            'max_model_len': 4096,   # Conservative default
+            'max_num_seqs': 32,       # Conservative default
+            'block_size': 64,         # Standard default
+        }
+        env_vars = {}
 
     # Display what we're using
-    print("Parameters from spec:")
+    if spec:
+        print("Parameters from spec:")
+    else:
+        print("Parameters (defaults):")
     print(f"  max_model_len: {vllm_args.get('max_model_len', 'default')}")
     print(f"  max_num_seqs: {vllm_args.get('max_num_seqs', 'default')}")
     print(f"  block_size: {vllm_args.get('block_size', 'default')}")
 
-    if env_vars.get('MESH_DEVICE'):
-        print(f"  MESH_DEVICE: {env_vars['MESH_DEVICE']}")
+    # Handle MESH_DEVICE override
+    if args.mesh_device:
+        # User explicitly specified MESH_DEVICE
+        final_mesh_device = args.mesh_device
+        print(f"  MESH_DEVICE: {final_mesh_device} (from --mesh-device)")
+    elif env_vars.get('MESH_DEVICE'):
+        # From spec
+        final_mesh_device = env_vars['MESH_DEVICE']
+        print(f"  MESH_DEVICE: {final_mesh_device} (from spec)")
+    else:
+        # Auto-detected
+        final_mesh_device = mesh_device
+        print(f"  MESH_DEVICE: {final_mesh_device} (auto-detected)")
 
     print()
 
@@ -259,6 +311,9 @@ def run_command(args):
         if verbose:
             print(f"  Setting {key}={value}")
 
+    # Set MESH_DEVICE
+    env['MESH_DEVICE'] = final_mesh_device
+
     # Set ARCH_NAME if Blackhole
     if hardware.is_blackhole():
         arch_name = hardware.get_arch_name()
@@ -266,6 +321,19 @@ def run_command(args):
             env['TT_METAL_ARCH_NAME'] = arch_name
             if verbose:
                 print(f"  Setting TT_METAL_ARCH_NAME={arch_name}")
+
+    # CRITICAL: Set VLLM_TARGET_DEVICE for vLLM platform detection
+    # Without this, vLLM can't detect TT platform and falls back to CPU
+    env['VLLM_TARGET_DEVICE'] = 'tt'
+    if verbose:
+        print(f"  Setting VLLM_TARGET_DEVICE=tt")
+
+    # Set HF_MODEL if we have a local model path
+    # Use actual path instead of guessing org/name format
+    if model_path and 'HF_MODEL' not in env:
+        env['HF_MODEL'] = str(model_path)
+        if verbose:
+            print(f"  Setting HF_MODEL={model_path}")
 
     # Show the actual command (transparent like tt-jukebox)
     print()
@@ -340,6 +408,12 @@ def add_run_parser(subparsers):
         '--verbose',
         action='store_true',
         help='Show detailed information',
+    )
+
+    run_parser.add_argument(
+        '--mesh-device',
+        type=str,
+        help='Override MESH_DEVICE (e.g., P150, P150X4, N300)',
     )
 
     run_parser.set_defaults(func=run_command)

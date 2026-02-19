@@ -139,6 +139,60 @@ def find_model_path(model_str: str, models_dir: Path = DEFAULT_MODELS_DIR) -> Op
     return None
 
 
+def detect_tt_cache(model_path: Path) -> dict:
+    """
+    Detect TT-optimized weight cache in model directory.
+
+    This function checks for TT hardware-specific tensor caches that have been
+    pre-converted for optimal performance on Tenstorrent devices.
+
+    Args:
+        model_path: Path to model directory
+
+    Returns:
+        Dict with cache info:
+        {
+            'has_cache': bool,
+            'device': str,  # e.g., "P150x4", "T3K"
+            'cache_path': Path,
+            'tensor_count': int,
+            'cache_size_mb': int,
+        }
+    """
+    result = {
+        'has_cache': False,
+        'device': None,
+        'cache_path': None,
+        'tensor_count': 0,
+        'cache_size_mb': 0,
+    }
+
+    # Check for common device cache directories
+    # These are the standard directory names used by TT model conversion tools
+    device_dirs = ['P150x4', 'T3K', 'P150x8', 'TG', 'P150', 'N150', 'N300', 'P300C']
+
+    for device_name in device_dirs:
+        # Check for tensor_cache_bfp8 directory (standard TT cache format)
+        device_cache = model_path / device_name / 'tensor_cache_bfp8'
+        if device_cache.exists() and device_cache.is_dir():
+            # Found TT cache! Check for tensor files
+            tensor_files = list(device_cache.glob('*.tensorbin'))
+
+            if tensor_files:
+                result['has_cache'] = True
+                result['device'] = device_name
+                result['cache_path'] = device_cache
+                result['tensor_count'] = len(tensor_files)
+
+                # Calculate cache size
+                total_bytes = sum(f.stat().st_size for f in tensor_files)
+                result['cache_size_mb'] = int(total_bytes / (1024 * 1024))
+
+                break  # Use first found cache
+
+    return result
+
+
 def download_from_huggingface(repo_id: str, local_dir: Path, token: Optional[str] = None) -> Path:
     """
     Download model from HuggingFace Hub.
@@ -314,101 +368,147 @@ def get(args: argparse.Namespace) -> int:
 
 def list_models(args):
     """
-    List installed models.
+    List installed models and optionally show available models from tt-inference-server specs.
 
     Shows models in ~/models directory, including HuggingFace cache format.
     Indicates which model is used in the active stack (if any).
+
+    NEW: Supports --device flag to also show available models from specs.
     """
     models_dir = Path.home() / 'models'
+    show_available = hasattr(args, 'device') and args.device
+    device_filter = args.device if show_available else None
 
     print()
 
-    if not models_dir.exists():
+    # Show installed models
+    if models_dir.exists():
+        # Find all models (including HF cache)
+        models = []
+        seen_names = set()
+
+        for item in models_dir.iterdir():
+            if not item.is_dir():
+                continue
+
+            # Skip .locks directory
+            if item.name.startswith('.'):
+                continue
+
+            # Handle HF cache format (models--org--name)
+            if item.name.startswith('models--'):
+                snapshots_dir = item / "snapshots"
+                if snapshots_dir.exists():
+                    snapshots = list(snapshots_dir.iterdir())
+                    if snapshots:
+                        # Use most recent snapshot
+                        snapshots.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                        model_path = snapshots[0]
+
+                        if (model_path / "config.json").exists():
+                            # Extract model name from cache directory
+                            # models--org--name -> org/name
+                            parts = item.name.replace('models--', '').split('--')
+                            if len(parts) >= 2:
+                                model_name = '/'.join(parts)
+                                if model_name not in seen_names:
+                                    models.append((model_name, model_path, item))
+                                    seen_names.add(model_name)
+            else:
+                # Direct directory
+                if (item / "config.json").exists():
+                    model_name = item.name
+                    if model_name not in seen_names:
+                        models.append((model_name, item, item))
+                        seen_names.add(model_name)
+
+        if models:
+            # Check active stack
+            active_stack = None
+            stack_model = None
+            try:
+                from tt.utils import stack as stackutils
+                active_stack = stackutils.get_active_stack()
+                if active_stack:
+                    stack_config = stackutils.get_stack(active_stack)
+                    if stack_config:
+                        stack_model = stack_config.get('model')
+            except:
+                pass
+
+            print(f"📦 Installed Models ({len(models)})")
+            print("=" * 70)
+            print()
+
+            for model_name, model_path, cache_dir in sorted(models, key=lambda x: x[0]):
+                # Get model size
+                size = sum(f.stat().st_size for f in cache_dir.rglob('*') if f.is_file())
+                size_gb = size / (1024 ** 3)
+
+                # Check if this is the active stack model
+                is_active_stack = (stack_model and model_name == stack_model)
+                marker = " ✓ (active stack)" if is_active_stack else ""
+
+                print(f"  {model_name}{marker}")
+                print(f"    Path: {model_path}")
+                print(f"    Size: {size_gb:.1f} GB")
+                print()
+
+            if active_stack and stack_model:
+                print(f"Active stack '{active_stack}' uses: {stack_model}")
+                print()
+        else:
+            print("No models installed locally")
+            print()
+    else:
         print("Models directory not found: ~/models")
         print()
-        print("Create it with: mkdir -p ~/models")
-        print()
-        return 1
 
-    # Find all models (including HF cache)
-    models = []
-    seen_names = set()
+    # Show available models from specs if --device is specified
+    if show_available:
+        try:
+            from tt.utils import model_specs, hardware
 
-    for item in models_dir.iterdir():
-        if not item.is_dir():
-            continue
+            print(f"🌐 Available Models for {device_filter} (from tt-inference-server)")
+            print("=" * 70)
+            print()
 
-        # Skip .locks directory
-        if item.name.startswith('.'):
-            continue
+            results = model_specs.find_compatible_models(device_filter, verbose=False)
 
-        # Handle HF cache format (models--org--name)
-        if item.name.startswith('models--'):
-            snapshots_dir = item / "snapshots"
-            if snapshots_dir.exists():
-                snapshots = list(snapshots_dir.iterdir())
-                if snapshots:
-                    # Use most recent snapshot
-                    snapshots.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-                    model_path = snapshots[0]
+            if results:
+                print(f"Found {len(results)} compatible model(s):")
+                print()
 
-                    if (model_path / "config.json").exists():
-                        # Extract model name from cache directory
-                        # models--org--name -> org/name
-                        parts = item.name.replace('models--', '').split('--')
-                        if len(parts) >= 2:
-                            model_name = '/'.join(parts)
-                            if model_name not in seen_names:
-                                models.append((model_name, model_path, item))
-                                seen_names.add(model_name)
-        else:
-            # Direct directory
-            if (item / "config.json").exists():
-                model_name = item.name
-                if model_name not in seen_names:
-                    models.append((model_name, item, item))
-                    seen_names.add(model_name)
+                for spec in sorted(results, key=lambda x: x.get('model_name', '')):
+                    model_name = spec.get('model_name', 'unknown')
 
-    if not models:
-        print("No models installed")
-        print()
-        print("Download models with: tt model download <name>")
-        print()
-        return 0
+                    # Get key parameters
+                    device_model_spec = spec.get('device_model_spec', {})
+                    vllm_args = device_model_spec.get('vllm_args', {})
+                    max_len = vllm_args.get('max_model_len', 'N/A')
 
-    # Check active stack
-    active_stack = None
-    stack_model = None
-    try:
-        from tt.utils import stack as stackutils
-        active_stack = stackutils.get_active_stack()
-        if active_stack:
-            stack_config = stackutils.get_stack(active_stack)
-            if stack_config:
-                stack_model = stack_config.get('model')
-    except:
-        pass
+                    print(f"  • {model_name}")
+                    print(f"    Max context: {max_len} tokens")
+                    print()
 
-    print(f"Installed Models ({len(models)})")
-    print("=" * 70)
-    print()
+                print("To get details: tt model spec-info <model-name>")
+                print("To download: tt model get <model-name>")
+                print()
+            else:
+                print(f"No models found for {device_filter}")
+                print()
+                print("Try:")
+                print("  • tt model search <query> to search all models")
+                print("  • tt model list (without --device) to see installed models")
+                print()
 
-    for model_name, model_path, cache_dir in sorted(models, key=lambda x: x[0]):
-        # Get model size
-        size = sum(f.stat().st_size for f in cache_dir.rglob('*') if f.is_file())
-        size_gb = size / (1024 ** 3)
+        except Exception as e:
+            print(f"⚠️  Could not fetch available models: {e}")
+            print()
 
-        # Check if this is the active stack model
-        is_active_stack = (stack_model and model_name == stack_model)
-        marker = " ✓ (active stack)" if is_active_stack else ""
-
-        print(f"  {model_name}{marker}")
-        print(f"    Path: {model_path}")
-        print(f"    Size: {size_gb:.1f} GB")
-        print()
-
-    if active_stack and stack_model:
-        print(f"Active stack '{active_stack}' uses: {stack_model}")
+    if not show_available and not (models_dir.exists() and models):
+        print("Download models with: tt model get <name>")
+        print("Or see available models: tt model list --device P150X4")
         print()
 
     return 0
@@ -504,6 +604,22 @@ def info(args):
     size_gb = size / (1024 ** 3)
     print(f"Total size: {size_gb:.1f} GB")
     print()
+
+    # Check for TT cache
+    cache_info = detect_tt_cache(model_path)
+    if cache_info['has_cache']:
+        print("TT Hardware Cache:")
+        print(f"  Device: {cache_info['device']}")
+        print(f"  Path: {cache_info['cache_path']}")
+        print(f"  Tensors: {cache_info['tensor_count']}")
+        print(f"  Size: {cache_info['cache_size_mb']} MB")
+        print(f"  ✓ Model is TT-optimized for {cache_info['device']}")
+        print()
+    else:
+        print("TT Hardware Cache: Not found")
+        print("  This model has not been converted for TT hardware.")
+        print("  It will run slower or may not work on TT devices.")
+        print()
 
     # Check if used in any stacks
     try:

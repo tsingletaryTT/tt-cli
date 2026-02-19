@@ -400,3 +400,84 @@ def get_venv_python_version(venv_path: Path) -> Optional[str]:
         return version
     except:
         return None
+
+
+def check_vllm_patches() -> dict:
+    """
+    Check if required vLLM patches are applied for custom model support.
+
+    These patches improve compatibility with custom TT models:
+    1. Model registration patch - Ensures TT models are registered in worker subprocesses
+    2. Block size default patch - Sets sensible block_size=64 default
+
+    Returns:
+        Dict with patch status:
+        {
+            'model_registration': bool,  # _ensure_tt_models_registered patch
+            'block_size_default': bool,  # block_size=64 default patch
+            'vllm_path': Path,           # Path to tt-vllm installation
+            'warnings': list,            # List of warnings
+        }
+    """
+    result = {
+        'model_registration': False,
+        'block_size_default': False,
+        'vllm_path': None,
+        'warnings': [],
+    }
+
+    # Find tt-vllm installation
+    # Check both source directory and installed site-packages
+    vllm_paths = [
+        Path.home() / 'tt-vllm',
+        Path.home() / 'tt-metal' / 'build' / 'python_env_vllm' / 'lib' / 'python3.12' / 'site-packages' / 'vllm',
+    ]
+
+    for vllm_path in vllm_paths:
+        if vllm_path.exists():
+            result['vllm_path'] = vllm_path
+            break
+
+    if not result['vllm_path']:
+        result['warnings'].append("vLLM installation not found")
+        return result
+
+    # Check for model registration patch in tt.py platform file
+    # Handle both source directory structure and installed package structure
+    possible_tt_files = [
+        result['vllm_path'] / 'vllm' / 'platforms' / 'tt.py',  # Source directory
+        result['vllm_path'] / 'platforms' / 'tt.py',           # Installed package
+    ]
+
+    tt_platform_file = None
+    for possible_file in possible_tt_files:
+        if possible_file.exists():
+            tt_platform_file = possible_file
+            break
+
+    if tt_platform_file and tt_platform_file.exists():
+        content = tt_platform_file.read_text()
+
+        # Check for model registration patch
+        if '_ensure_tt_models_registered' in content:
+            result['model_registration'] = True
+        else:
+            result['warnings'].append(
+                "Model registration patch missing in vllm/platforms/tt.py. "
+                "Custom models may fail with 'model not registered' error. "
+                "See ASCII_MODEL_SOLUTION.md for patch details."
+            )
+
+        # Check for block size default patch
+        if 'block_size = 64' in content or 'block_size=64' in content:
+            result['block_size_default'] = True
+        else:
+            result['warnings'].append(
+                "Block size default patch missing in vllm/platforms/tt.py. "
+                "May cause 'NoneType multiplication' errors. "
+                "See ASCII_MODEL_SOLUTION.md for patch details."
+            )
+    else:
+        result['warnings'].append("vllm/platforms/tt.py not found")
+
+    return result

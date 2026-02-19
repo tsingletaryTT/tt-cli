@@ -431,29 +431,47 @@ def start(args: argparse.Namespace) -> int:
     if arch_name:
         env['TT_METAL_ARCH_NAME'] = arch_name
 
+    # CRITICAL: Set VLLM_TARGET_DEVICE for vLLM platform detection
+    # Without this, vLLM can't detect TT platform and falls back to CPU
+    # This is the key environment variable that enables TT hardware support
+    env['VLLM_TARGET_DEVICE'] = 'tt'
+    print(f"  VLLM_TARGET_DEVICE: tt")
+
     # Set HF_MODEL for TT vLLM backend (required for model initialization)
-    # Construct from model directory name using common patterns
+    # IMPORTANT: Must be the actual model directory path, not a guessed org/name
+    # This ensures custom models (like ASCII-merged) work correctly
     if 'HF_MODEL' not in env:
-        model_name = args.model
+        # Use the resolved model_path (already validated to contain config.json)
+        env['HF_MODEL'] = str(model_path)
 
-        # Try common organization names based on model name
-        if 'deepseek' in model_name.lower():
-            hf_model = f"deepseek-ai/{model_name}"
-        elif 'llama' in model_name.lower() and 'meta' not in model_name.lower():
-            hf_model = f"meta-llama/{model_name}"
-        elif 'qwen' in model_name.lower():
-            hf_model = f"Qwen/{model_name}"
-        elif 'mistral' in model_name.lower():
-            hf_model = f"mistralai/{model_name}"
-        else:
-            # If already in org/name format, use as-is
-            if '/' in model_name:
-                hf_model = model_name
-            else:
-                # Generic fallback - just use the model name
-                hf_model = model_name
+        # Check if model has TT cache and provide feedback
+        cache_info = modelutils.detect_tt_cache(model_path)
 
-        env['HF_MODEL'] = hf_model
+        if cache_info['has_cache']:
+            print(f"  ✓ Found TT cache: {cache_info['device']} ({cache_info['tensor_count']} tensors, {cache_info['cache_size_mb']}MB)")
+
+            # Verify cache matches target hardware
+            target_mesh = env.get('MESH_DEVICE')
+            if target_mesh and target_mesh != cache_info['device']:
+                print(f"  ⚠️  Warning: Cache is for {cache_info['device']}, but running on {target_mesh}")
+                print(f"     Model may fail or perform poorly. Consider regenerating cache.")
+
+    # Validate vLLM patches before starting
+    print()
+    print("🔍 Validating vLLM patches...")
+    patch_status = envmanager.check_vllm_patches()
+
+    if patch_status['warnings']:
+        print()
+        print("⚠️  vLLM Patch Warnings:")
+        for warning in patch_status['warnings']:
+            print(f"   - {warning}")
+        print()
+        print("   These patches improve custom model support.")
+        print("   Your model may still work, but you might encounter issues.")
+        print("   See: ASCII_MODEL_SOLUTION.md for patch details")
+    else:
+        print("✓ All vLLM patches detected")
 
     # Print what we're doing
     print(f"\nStarting vLLM server:")
