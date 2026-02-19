@@ -13,7 +13,7 @@ import argparse
 from pathlib import Path
 from typing import Dict, Optional, List
 
-from tt.utils import hardware, envmanager, stack as stackutils
+from tt.utils import hardware, envmanager, stack as stackutils, model_specs, compatibility
 from tt.commands import model as modelutils
 
 
@@ -28,6 +28,9 @@ def get_optimal_params(hw_info: Dict, model_name: str) -> Dict[str, any]:
     """
     Determine optimal vLLM parameters based on hardware.
 
+    NEW: Now fetches official specs from tt-inference-server (live from GitHub).
+    Falls back to safe defaults if no spec is found.
+
     Args:
         hw_info: Hardware information from detect_hardware()
         model_name: Name of the model being served
@@ -38,36 +41,72 @@ def get_optimal_params(hw_info: Dict, model_name: str) -> Dict[str, any]:
     device_count = hw_info.get('count', 1)
     device_type = hw_info.get('primary_type', 'N150')
 
-    # Base parameters
+    # Get mesh device name for spec lookup
+    mesh_device = hardware.get_mesh_device()
+    if not mesh_device:
+        mesh_device = device_type
+
+    # Try to fetch official spec from tt-inference-server
+    try:
+        spec = model_specs.get_model_spec(model_name, mesh_device, verbose=False)
+
+        if spec:
+            # Extract parameters from official spec
+            device_model_spec = spec.get('device_model_spec', {})
+            vllm_args = device_model_spec.get('vllm_args', {})
+
+            params = {
+                'max_model_len': int(vllm_args.get('max_model_len', 4096)),
+                'max_num_seqs': int(vllm_args.get('max_num_seqs', 32)),
+                'block_size': int(vllm_args.get('block_size', 64)),
+                'tensor_parallel_size': None,  # TT hardware uses MESH_DEVICE
+                'source': 'tt-inference-server (live)',
+                'spec_id': spec.get('spec_id', 'unknown'),
+            }
+
+            # Store additional useful info
+            if 'env_vars' in device_model_spec:
+                params['env_vars'] = device_model_spec['env_vars']
+
+            # Note: We have a validated spec
+            print(f"✓ Using official spec: {spec.get('model_name', model_name)}")
+            print(f"  Spec ID: {spec.get('spec_id', 'unknown')}")
+
+            return params
+
+    except Exception as e:
+        # Failed to fetch specs - will use fallback
+        pass
+
+    # Fallback: Use safe defaults
+    print(f"⚠️  No official spec found for '{model_name}' on {mesh_device}")
+    print(f"   Using safe default parameters")
+    print(f"   Run 'tt model search {model_name}' to see compatible models")
+
+    # Safe defaults based on hardware
     params = {
         'max_model_len': 2048,
         'max_num_seqs': 16,
         'block_size': 64,
-        'tensor_parallel_size': device_count if device_count > 1 else 1,
+        'tensor_parallel_size': None,
+        'source': 'safe_defaults',
     }
 
     # Adjust based on device type
-    if device_type in ['P100', 'P150', 'P300']:
+    if device_type in ['P100', 'P150', 'P300', 'P300C']:
         # Blackhole has more memory
         params['max_model_len'] = 4096
         params['max_num_seqs'] = 32
 
-    # Adjust based on model size (heuristic from name)
+    # Basic model size heuristics (only for fallback)
     model_lower = model_name.lower()
     if '70b' in model_lower or '65b' in model_lower:
-        # Large models - conservative settings
-        # Note: TT hardware uses MESH_DEVICE, not tensor-parallel-size
-        params['tensor_parallel_size'] = None  # Don't set for TT hardware
-        params['max_model_len'] = 32768  # Reasonable for 70B models
+        params['max_model_len'] = 32768
         params['max_num_seqs'] = 8
     elif '8b' in model_lower or '7b' in model_lower:
-        # Medium models
-        params['tensor_parallel_size'] = None  # Don't set for TT hardware
         params['max_model_len'] = 4096
     elif '0.6b' in model_lower or '1b' in model_lower or '2b' in model_lower:
-        # Small models can use less parallelism
-        params['tensor_parallel_size'] = 1
-        params['max_num_seqs'] = 32  # Can handle more sequences
+        params['max_num_seqs'] = 32
 
     return params
 
@@ -336,7 +375,16 @@ def start(args: argparse.Namespace) -> int:
     env = os.environ.copy()
     env.update(fixed_env_vars)
 
-    # Apply stack environment variables
+    # Apply model spec environment variables (if available from live spec)
+    if 'env_vars' in optimal:
+        for var, value in optimal['env_vars'].items():
+            # Don't override MESH_DEVICE or device-specific settings yet
+            # (they'll be set properly later)
+            if var not in ['MESH_DEVICE', 'TT_VISIBLE_DEVICES']:
+                env[var] = str(value)
+                print(f"  Spec env: {var}={value}")
+
+    # Apply stack environment variables (stack overrides spec)
     if stack_config and 'env_vars' in stack_config:
         for var, value in stack_config['env_vars'].items():
             env[var] = str(value)

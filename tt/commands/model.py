@@ -1,6 +1,9 @@
 """
 Model management commands
 Download, list, validate models
+
+NEW: Now includes search and spec-based model discovery using live data
+from tt-inference-server.
 """
 
 import os
@@ -583,3 +586,194 @@ def check(args):
         print(f"  tt model get {model_name}")
         print()
         return 1
+
+
+def search(args):
+    """
+    Search for models in tt-inference-server specs.
+
+    NEW command that searches live model specifications from tt-inference-server.
+    This shows what models are officially supported on your hardware.
+    """
+    from tt.utils import model_specs, hardware
+
+    query = args.query
+    device_filter = args.device
+
+    print()
+    print(f"🔍 Searching for: {query}")
+    print()
+
+    # Detect hardware if no device filter specified
+    if not device_filter:
+        hw = hardware.detect_hardware()
+        if hw:
+            device_filter = hardware.get_mesh_device()
+            print(f"Hardware detected: {device_filter}")
+        else:
+            print("No hardware detected - showing all models")
+        print()
+
+    # Search models
+    try:
+        results = model_specs.search_models(query, device_filter, verbose=True)
+    except Exception as e:
+        print(f"❌ Error searching models: {e}")
+        return 1
+
+    if not results:
+        print(f"No models found matching '{query}'")
+        if device_filter:
+            print(f"  For device: {device_filter}")
+        print()
+        print("Try:")
+        print("  • Use a more general search term")
+        print("  • Use --device to search for other hardware")
+        print("  • Run 'tt model list' to see all available models")
+        return 0
+
+    print(f"Found {len(results)} model(s):")
+    print()
+
+    # Group by device type
+    by_device = {}
+    for spec in results:
+        device = spec.get('device_type', 'unknown')
+        if device not in by_device:
+            by_device[device] = []
+        by_device[device].append(spec)
+
+    # Display grouped results
+    for device, specs in sorted(by_device.items()):
+        print(f"📦 {device}:")
+        for spec in specs:
+            model_name = spec.get('model_name', 'unknown')
+            spec_id = spec.get('spec_id', 'unknown')
+
+            # Get key parameters
+            device_model_spec = spec.get('device_model_spec', {})
+            vllm_args = device_model_spec.get('vllm_args', {})
+            max_len = vllm_args.get('max_model_len', 'N/A')
+
+            print(f"  • {model_name}")
+            print(f"    Max context: {max_len} tokens")
+            print(f"    Spec ID: {spec_id}")
+        print()
+
+    print("To get details:")
+    print(f"  tt model spec-info <model-name>")
+    print()
+    print("To run a model:")
+    print(f"  tt run <model-name>")
+    print()
+
+    return 0
+
+
+def spec_info(args):
+    """
+    Show detailed model spec information from tt-inference-server.
+
+    NEW command that displays the full official specification for a model,
+    including all parameters, environment variables, and commit requirements.
+    """
+    from tt.utils import model_specs, hardware, compatibility
+
+    model_name = args.model
+    device_filter = args.device
+
+    print()
+    print(f"📋 Model Spec Information: {model_name}")
+    print()
+
+    # Detect hardware if no device specified
+    if not device_filter:
+        hw = hardware.detect_hardware()
+        if hw:
+            device_filter = hardware.get_mesh_device()
+            print(f"Hardware detected: {device_filter}")
+        else:
+            print("⚠️  No hardware detected")
+            print("   Specify --device to see specs for specific hardware")
+            return 1
+
+    print()
+
+    # Get spec
+    try:
+        spec = model_specs.get_model_spec(model_name, device_filter, verbose=True)
+    except Exception as e:
+        print(f"❌ Error fetching spec: {e}")
+        return 1
+
+    if not spec:
+        print(f"❌ No spec found for '{model_name}' on {device_filter}")
+        print()
+        print("Try:")
+        print(f"  tt model search {model_name}")
+        return 1
+
+    # Display spec information
+    full_name = spec.get('model_name', model_name)
+    spec_id = spec.get('spec_id', 'unknown')
+    device_type = spec.get('device_type', 'unknown')
+
+    print(f"Model: {full_name}")
+    print(f"Spec ID: {spec_id}")
+    print(f"Device: {device_type}")
+    print()
+
+    # Version information
+    print("Required versions:")
+    print(f"  tt-metal: {spec.get('tt_metal_commit', 'unknown')}")
+    print(f"  tt-vllm:  {spec.get('vllm_commit', 'unknown')}")
+    print()
+
+    # Check compatibility with current environment
+    print("Environment compatibility:")
+    compat = compatibility.check_environment_compatibility(spec, verbose=False)
+
+    if compat['all_match']:
+        print("  ✓ Your environment matches this spec")
+    else:
+        print("  ⚠️  Your environment differs:")
+        if not compat['metal_match']:
+            print(f"    tt-metal: {compat['metal_current']} → {compat['metal_required']}")
+        if not compat['vllm_match']:
+            print(f"    tt-vllm:  {compat['vllm_current']} → {compat['vllm_required']}")
+
+    print()
+
+    # vLLM arguments
+    device_model_spec = spec.get('device_model_spec', {})
+    vllm_args = device_model_spec.get('vllm_args', {})
+
+    print("vLLM parameters:")
+    print(f"  max_model_len: {vllm_args.get('max_model_len', 'N/A')}")
+    print(f"  max_num_seqs:  {vllm_args.get('max_num_seqs', 'N/A')}")
+    print(f"  block_size:    {vllm_args.get('block_size', 'N/A')}")
+    print()
+
+    # Environment variables
+    env_vars = device_model_spec.get('env_vars', {})
+    if env_vars:
+        print("Environment variables:")
+        for key, value in env_vars.items():
+            print(f"  {key}: {value}")
+        print()
+
+    # Override TT config
+    override_config = device_model_spec.get('override_tt_config', {})
+    if override_config:
+        print("TT Config overrides:")
+        for key, value in override_config.items():
+            print(f"  {key}: {value}")
+        print()
+
+    print("To run this model:")
+    print(f"  tt run {model_name}")
+    if not compat['all_match']:
+        print("  (use --force to run anyway with environment mismatch)")
+    print()
+
+    return 0

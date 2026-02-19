@@ -9,7 +9,7 @@ import argparse
 from pathlib import Path
 
 # Import command handlers
-from tt.commands import serve, env, device, firmware, status, model, workflow, config, metal, stack
+from tt.commands import serve, env, device, firmware, status, model, workflow, config, metal, stack, run
 
 
 def create_parser():
@@ -37,6 +37,11 @@ def create_parser():
         help='Available commands',
         required=False,
     )
+
+    # ========================================================================
+    # tt run - Simple model runner (primary workflow)
+    # ========================================================================
+    run.add_run_parser(subparsers)
 
     # ========================================================================
     # tt serve - Server management
@@ -698,6 +703,36 @@ def create_parser():
         help='Model name',
     )
     check_model_parser.set_defaults(func=model.check)
+
+    # tt model search (NEW - search tt-inference-server specs)
+    search_model_parser = model_subparsers.add_parser(
+        'search',
+        help='Search for models in tt-inference-server specs',
+    )
+    search_model_parser.add_argument(
+        'query',
+        help='Search query (e.g., "llama", "qwen", "8b")',
+    )
+    search_model_parser.add_argument(
+        '--device',
+        help='Filter by device type (e.g., P150X4, N300)',
+    )
+    search_model_parser.set_defaults(func=model.search)
+
+    # tt model spec-info (NEW - show detailed spec from tt-inference-server)
+    spec_info_model_parser = model_subparsers.add_parser(
+        'spec-info',
+        help='Show detailed model spec from tt-inference-server',
+    )
+    spec_info_model_parser.add_argument(
+        'model',
+        help='Model name',
+    )
+    spec_info_model_parser.add_argument(
+        '--device',
+        help='Device type (e.g., P150X4, N300)',
+    )
+    spec_info_model_parser.set_defaults(func=model.spec_info)
 
     # ========================================================================
     # tt workflow - Workflow automation
