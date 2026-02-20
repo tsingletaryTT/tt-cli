@@ -9,15 +9,81 @@ import argparse
 from pathlib import Path
 
 # Import command handlers
-from tt.commands import serve, env, device, firmware, status, model, workflow, config, metal, stack, run
+from tt.commands import serve, env, device, firmware, status, model, workflow, config, metal, stack, run, ps, logs, chat, doctor
+from tt.utils.similarity import find_similar_command
+
+
+class SmartArgumentParser(argparse.ArgumentParser):
+    """
+    ArgumentParser with 'did you mean?' suggestions for typos.
+
+    Extends argparse.ArgumentParser to provide helpful suggestions when users
+    mistype commands, similar to slack CLI, brew, gh, etc.
+
+    This improves the user experience by helping users quickly recover from
+    common typos without having to re-read the entire command list.
+    """
+
+    def error(self, message: str):
+        """
+        Override error() to add 'did you mean?' suggestions.
+
+        Detects invalid choice errors and suggests similar valid commands
+        using fuzzy string matching (Ratcliff/Obershelp algorithm via difflib).
+
+        Args:
+            message: The error message from argparse
+        """
+        # Check if this is an "invalid choice" error
+        if "invalid choice:" in message:
+            # Extract the invalid choice and valid choices from error message
+            # Format: "invalid choice: 'X' (choose from 'a', 'b', 'c')"
+            try:
+                # Parse out the invalid choice
+                invalid_start = message.find("'") + 1
+                invalid_end = message.find("'", invalid_start)
+                invalid_choice = message[invalid_start:invalid_end]
+
+                # Parse out valid choices
+                choices_start = message.find("(choose from") + len("(choose from")
+                choices_text = message[choices_start:].strip(" )")
+                # Extract choices from format: 'a', 'b', 'c'
+                valid_choices = [c.strip().strip("'\"") for c in choices_text.split(",")]
+
+                # Find similar command using fuzzy matching
+                suggestion = find_similar_command(invalid_choice, valid_choices)
+
+                if suggestion:
+                    # Add suggestion to error message
+                    message = message.rstrip(")")
+                    message += f"\n\nDid you mean '{suggestion}'?"
+
+            except (ValueError, IndexError):
+                # If parsing fails, just use original message
+                # This ensures we never break existing error handling
+                pass
+
+        # Call parent error() which prints message and exits
+        super().error(message)
 
 
 def create_parser():
     """Create argument parser with all subcommands."""
-    parser = argparse.ArgumentParser(
+    parser = SmartArgumentParser(
         prog='tt',
         description='Unified CLI for Tenstorrent hardware development',
-        epilog='Run "tt <command> --help" for more information on a command.',
+        epilog='''Run "tt <command> --help" for more information on a command.
+
+Examples:
+  tt status                    # Show system status
+  tt doctor                    # Check system health
+  tt run llama-3.1-8b          # Run a model
+  tt ps                        # Show running models
+  tt chat                      # Chat with running model
+  tt logs my-model             # View model logs
+  tt stop my-model             # Stop a model
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     parser.add_argument(
@@ -50,11 +116,19 @@ def create_parser():
         'serve',
         help='Manage vLLM servers',
         description='Start and manage vLLM servers',
+        epilog='''Examples:
+  tt serve start my-model                # Start vLLM server
+  tt serve start qwen3 --port 8001       # Use different port
+  tt serve status                         # Show running servers
+  tt serve status --json                  # JSON output
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     serve_subparsers = serve_parser.add_subparsers(
         dest='serve_command',
         help='Server management commands',
         required=True,
+        parser_class=SmartArgumentParser,
     )
 
     # tt serve start
@@ -144,6 +218,43 @@ def create_parser():
     status_parser.set_defaults(func=serve.status)
 
     # ========================================================================
+    # tt ps - Show running models (docker-like interface)
+    # ========================================================================
+    ps_parser = subparsers.add_parser(
+        'ps',
+        help='Show running models',
+        description='List running models in a clean table format (like docker ps)',
+        epilog='''Examples:
+  tt ps                           # Show all running models
+  tt ps --json                    # JSON output
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ps_parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output as JSON',
+    )
+    ps_parser.add_argument(
+        '--pid-dir',
+        type=str,
+        default=None,
+        dest='pid_dir',
+        help='PID file directory',
+    )
+    ps_parser.set_defaults(func=ps.ps)
+
+    # ========================================================================
+    # tt logs - View model logs
+    # ========================================================================
+    logs.add_logs_parser(subparsers)
+
+    # ========================================================================
+    # tt chat - Interactive chat with running model
+    # ========================================================================
+    chat.add_chat_parser(subparsers)
+
+    # ========================================================================
     # tt stop - Stop server
     # ========================================================================
     stop_parser = subparsers.add_parser(
@@ -195,11 +306,19 @@ def create_parser():
     env_parser = subparsers.add_parser(
         'env',
         help='Manage Python environments',
+        epilog='''Examples:
+  tt env ls                              # List available environments
+  tt env use vllm                        # Switch to vLLM environment
+  tt env check                           # Validate current environment
+  tt env fix                             # Auto-fix common issues
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     env_subparsers = env_parser.add_subparsers(
         dest='env_command',
         help='Environment commands',
         required=True,
+        parser_class=SmartArgumentParser,
     )
 
     # tt env use
@@ -213,12 +332,19 @@ def create_parser():
     )
     use_parser.set_defaults(func=env.use)
 
-    # tt env list
+    # tt env list (and alias: tt env ls)
     list_parser = env_subparsers.add_parser(
         'list',
         help='List available environments',
     )
     list_parser.set_defaults(func=env.list_envs)
+
+    # tt env ls (alias for list)
+    ls_parser = env_subparsers.add_parser(
+        'ls',
+        help='List available environments (alias for list)',
+    )
+    ls_parser.set_defaults(func=env.list_envs)
 
     # tt env setup
     setup_parser = env_subparsers.add_parser(
@@ -267,11 +393,19 @@ def create_parser():
     metal_parser = subparsers.add_parser(
         'metal',
         help='Manage TT-Metal installations',
+        epilog='''Examples:
+  tt metal ls                            # List installed versions
+  tt metal checkout --tag v0.66.0-rc7    # Install specific version
+  tt metal use v0.66.0-rc7               # Set active version
+  tt metal info v0.66.0-rc7              # Show installation details
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     metal_subparsers = metal_parser.add_subparsers(
         dest='metal_command',
         help='Metal commands',
         required=True,
+        parser_class=SmartArgumentParser,
     )
 
     # tt metal checkout
@@ -330,7 +464,7 @@ def create_parser():
     )
     checkout_parser.set_defaults(func=metal.checkout)
 
-    # tt metal list
+    # tt metal list (and alias: tt metal ls)
     metal_list_parser = metal_subparsers.add_parser(
         'list',
         help='List installed TT-Metal versions',
@@ -341,6 +475,18 @@ def create_parser():
         help='Output as JSON',
     )
     metal_list_parser.set_defaults(func=metal.list_installations)
+
+    # tt metal ls (alias for list)
+    metal_ls_parser = metal_subparsers.add_parser(
+        'ls',
+        help='List installed TT-Metal versions (alias for list)',
+    )
+    metal_ls_parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output as JSON',
+    )
+    metal_ls_parser.set_defaults(func=metal.list_installations)
 
     # tt metal use
     metal_use_parser = metal_subparsers.add_parser(
@@ -374,7 +520,7 @@ def create_parser():
     )
     metal_info_parser.set_defaults(func=metal.info)
 
-    # tt metal remove
+    # tt metal remove (and alias: tt metal rm)
     metal_remove_parser = metal_subparsers.add_parser(
         'remove',
         help='Remove a TT-Metal installation',
@@ -389,6 +535,22 @@ def create_parser():
         help='Skip confirmation prompt',
     )
     metal_remove_parser.set_defaults(func=metal.remove)
+
+    # tt metal rm (alias for remove)
+    metal_rm_parser = metal_subparsers.add_parser(
+        'rm',
+        help='Remove a TT-Metal installation (alias for remove)',
+    )
+    metal_rm_parser.add_argument(
+        'version',
+        help='Version to remove',
+    )
+    metal_rm_parser.add_argument(
+        '--yes',
+        action='store_true',
+        help='Skip confirmation prompt',
+    )
+    metal_rm_parser.set_defaults(func=metal.remove)
 
     # tt metal build
     metal_build_parser = metal_subparsers.add_parser(
@@ -438,11 +600,19 @@ def create_parser():
     device_parser = subparsers.add_parser(
         'device',
         help='Manage Tenstorrent devices',
+        epilog='''Examples:
+  tt device info                         # Show device information
+  tt device test                         # Test all devices
+  tt device reset                        # Reset devices
+  tt device clear                        # Clear device state
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     device_subparsers = device_parser.add_subparsers(
         dest='device_command',
         help='Device commands',
         required=True,
+        parser_class=SmartArgumentParser,
     )
 
     # tt device test
@@ -479,14 +649,22 @@ def create_parser():
     firmware_parser = subparsers.add_parser(
         'firmware',
         help='Manage device firmware',
+        epilog='''Examples:
+  tt fw current                          # Show current firmware
+  tt fw ls                               # List available versions
+  tt fw flash v19.4.2 --yes              # Flash firmware version
+  tt fw latest --recommended             # Show recommended version
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     firmware_subparsers = firmware_parser.add_subparsers(
         dest='firmware_command',
         help='Firmware commands',
         required=True,
+        parser_class=SmartArgumentParser,
     )
 
-    # tt firmware list
+    # tt firmware list (and alias: tt firmware ls)
     list_fw_parser = firmware_subparsers.add_parser(
         'list',
         help='List available firmware versions',
@@ -502,6 +680,23 @@ def create_parser():
         help='Show only recommended versions for detected hardware',
     )
     list_fw_parser.set_defaults(func=firmware.list_firmware)
+
+    # tt firmware ls (alias for list)
+    ls_fw_parser = firmware_subparsers.add_parser(
+        'ls',
+        help='List available firmware versions (alias for list)',
+    )
+    ls_fw_parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output as JSON',
+    )
+    ls_fw_parser.add_argument(
+        '--recommended',
+        action='store_true',
+        help='Show only recommended versions for detected hardware',
+    )
+    ls_fw_parser.set_defaults(func=firmware.list_firmware)
 
     # tt firmware current
     current_fw_parser = firmware_subparsers.add_parser(
@@ -603,16 +798,74 @@ def create_parser():
     latest_fw_parser.set_defaults(func=firmware.latest)
 
     # ========================================================================
+    # tt fw - Firmware management (alias for firmware)
+    # ========================================================================
+    fw_parser = subparsers.add_parser(
+        'fw',
+        help='Manage device firmware (alias for firmware)',
+        description='Manage device firmware',
+        epilog='''Examples:
+  tt fw current                          # Show current firmware
+  tt fw ls                               # List available versions
+  tt fw flash v19.4.2 --yes              # Flash firmware version
+  tt fw latest --recommended             # Show recommended version
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    fw_subparsers = fw_parser.add_subparsers(
+        dest='firmware_command',  # Use same dest as firmware
+        help='Firmware commands',
+        required=True,
+        parser_class=SmartArgumentParser,
+    )
+
+    # Add all firmware subcommands to fw as well
+    # tt fw list / ls
+    list_fw2_parser = fw_subparsers.add_parser('list', help='List available firmware versions')
+    list_fw2_parser.add_argument('--json', action='store_true', help='Output as JSON')
+    list_fw2_parser.add_argument('--recommended', action='store_true', help='Show only recommended versions')
+    list_fw2_parser.set_defaults(func=firmware.list_firmware)
+
+    ls_fw2_parser = fw_subparsers.add_parser('ls', help='List available firmware versions (alias for list)')
+    ls_fw2_parser.add_argument('--json', action='store_true', help='Output as JSON')
+    ls_fw2_parser.add_argument('--recommended', action='store_true', help='Show only recommended versions')
+    ls_fw2_parser.set_defaults(func=firmware.list_firmware)
+
+    # tt fw current
+    current_fw2_parser = fw_subparsers.add_parser('current', help='Show current firmware version')
+    current_fw2_parser.add_argument('--json', action='store_true', help='Output as JSON')
+    current_fw2_parser.set_defaults(func=firmware.current_firmware)
+
+    # tt fw flash
+    flash_fw2_parser = fw_subparsers.add_parser('flash', help='Flash firmware to devices')
+    flash_fw2_parser.add_argument('version_or_path', help='Firmware version or path to .fwbundle file')
+    flash_fw2_parser.add_argument('--force', action='store_true', help='Force update ROM')
+    flash_fw2_parser.add_argument('--no-reset', action='store_true', dest='no_reset', help='Do not reset devices after flash')
+    flash_fw2_parser.add_argument('--allow-downgrades', action='store_true', dest='allow_downgrades', help='Allow major version downgrades')
+    flash_fw2_parser.add_argument('--yes', action='store_true', help='Skip confirmation prompt')
+    flash_fw2_parser.set_defaults(func=firmware.flash)
+
+    # ========================================================================
     # tt model - Model management
     # ========================================================================
     model_parser = subparsers.add_parser(
         'model',
         help='Manage AI models',
+        epilog='''Examples:
+  tt model ls                            # List installed models
+  tt model ls --device P150X4            # Show available for device
+  tt model get meta-llama/Llama-3.1-8B   # Download from HuggingFace
+  tt model info qwen3                    # Show model details
+  tt model search llama                  # Search available models
+  tt model cache ls qwen3                # List TT cache files
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     model_subparsers = model_parser.add_subparsers(
         dest='model_command',
         help='Model commands',
         required=True,
+        parser_class=SmartArgumentParser,
     )
 
     # tt model get / download
@@ -675,7 +928,7 @@ def create_parser():
     )
     download_parser.set_defaults(func=model.download)
 
-    # tt model list
+    # tt model list (and alias: tt model ls)
     list_model_parser = model_subparsers.add_parser(
         'list',
         help='List installed models (and optionally show available models)',
@@ -685,6 +938,17 @@ def create_parser():
         help='Also show available models for device type (e.g., P150X4, N300)',
     )
     list_model_parser.set_defaults(func=model.list_models)
+
+    # tt model ls (alias for list)
+    ls_model_parser = model_subparsers.add_parser(
+        'ls',
+        help='List installed models (alias for list)',
+    )
+    ls_model_parser.add_argument(
+        '--device',
+        help='Also show available models for device type (e.g., P150X4, N300)',
+    )
+    ls_model_parser.set_defaults(func=model.list_models)
 
     # tt model info
     info_model_parser = model_subparsers.add_parser(
@@ -738,17 +1002,83 @@ def create_parser():
     )
     spec_info_model_parser.set_defaults(func=model.spec_info)
 
+    # tt model cache - Cache management
+    cache_model_parser = model_subparsers.add_parser(
+        'cache',
+        help='Manage TT model caches',
+        description='Build, clear, and list TT-optimized tensor caches',
+        epilog='''Examples:
+  tt model cache ls my-model            # List cache files
+  tt model cache build my-model         # Build TT cache
+  tt model cache clear my-model         # Clear cache
+  tt model cache clear my-model --device P150X4  # Clear specific device cache
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    cache_subparsers = cache_model_parser.add_subparsers(
+        dest='cache_command',
+        help='Cache commands',
+        required=True,
+        parser_class=SmartArgumentParser,
+    )
+
+    # tt model cache ls
+    cache_ls_parser = cache_subparsers.add_parser(
+        'ls',
+        help='List cache files',
+    )
+    cache_ls_parser.add_argument('model', help='Model name')
+    cache_ls_parser.add_argument('--models-dir', help='Models directory')
+    cache_ls_parser.set_defaults(func=model.cache_list)
+
+    # tt model cache list (alias)
+    cache_list_parser = cache_subparsers.add_parser(
+        'list',
+        help='List cache files (alias for ls)',
+    )
+    cache_list_parser.add_argument('model', help='Model name')
+    cache_list_parser.add_argument('--models-dir', help='Models directory')
+    cache_list_parser.set_defaults(func=model.cache_list)
+
+    # tt model cache clear
+    cache_clear_parser = cache_subparsers.add_parser(
+        'clear',
+        help='Clear TT cache',
+    )
+    cache_clear_parser.add_argument('model', help='Model name')
+    cache_clear_parser.add_argument('--device', help='Clear specific device cache only')
+    cache_clear_parser.add_argument('--models-dir', help='Models directory')
+    cache_clear_parser.add_argument('--yes', action='store_true', help='Skip confirmation')
+    cache_clear_parser.set_defaults(func=model.cache_clear)
+
+    # tt model cache build
+    cache_build_parser = cache_subparsers.add_parser(
+        'build',
+        help='Build TT cache',
+    )
+    cache_build_parser.add_argument('model', help='Model name')
+    cache_build_parser.add_argument('--models-dir', help='Models directory')
+    cache_build_parser.add_argument('--force', action='store_true', help='Rebuild if exists')
+    cache_build_parser.set_defaults(func=model.cache_build)
+
     # ========================================================================
     # tt workflow - Workflow automation
     # ========================================================================
     workflow_parser = subparsers.add_parser(
         'workflow',
         help='Run automated workflows',
+        epilog='''Examples:
+  tt workflow ls                         # List available workflows
+  tt workflow info validation            # Show workflow details
+  tt workflow run validation --model m   # Run validation workflow
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     workflow_subparsers = workflow_parser.add_subparsers(
         dest='workflow_command',
         help='Workflow commands',
         required=True,
+        parser_class=SmartArgumentParser,
     )
 
     # tt workflow list
@@ -811,14 +1141,22 @@ def create_parser():
     stack_parser = subparsers.add_parser(
         'stack',
         help='Manage deployment stacks',
+        epilog='''Examples:
+  tt stack ls                            # List available stacks
+  tt stack use my-stack                  # Activate a stack
+  tt stack info my-stack                 # Show stack details
+  tt stack create new-stack              # Create new stack
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     stack_subparsers = stack_parser.add_subparsers(
         dest='stack_command',
         help='Stack commands',
         required=True,
+        parser_class=SmartArgumentParser,
     )
 
-    # tt stack list
+    # tt stack list (and alias: tt stack ls)
     stack_list_parser = stack_subparsers.add_parser(
         'list',
         help='List available stacks',
@@ -829,6 +1167,18 @@ def create_parser():
         help='Output as JSON',
     )
     stack_list_parser.set_defaults(func=stack.list_stacks)
+
+    # tt stack ls (alias for list)
+    stack_ls_parser = stack_subparsers.add_parser(
+        'ls',
+        help='List available stacks (alias for list)',
+    )
+    stack_ls_parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output as JSON',
+    )
+    stack_ls_parser.set_defaults(func=stack.list_stacks)
 
     # tt stack use
     stack_use_parser = stack_subparsers.add_parser(
@@ -883,7 +1233,7 @@ def create_parser():
     )
     stack_create_parser.set_defaults(func=stack.create)
 
-    # tt stack remove
+    # tt stack remove (and alias: tt stack rm)
     stack_remove_parser = stack_subparsers.add_parser(
         'remove',
         help='Remove a stack',
@@ -899,17 +1249,41 @@ def create_parser():
     )
     stack_remove_parser.set_defaults(func=stack.remove)
 
+    # tt stack rm (alias for remove)
+    stack_rm_parser = stack_subparsers.add_parser(
+        'rm',
+        help='Remove a stack (alias for remove)',
+    )
+    stack_rm_parser.add_argument(
+        'name',
+        help='Stack name',
+    )
+    stack_rm_parser.add_argument(
+        '--yes',
+        action='store_true',
+        help='Skip confirmation',
+    )
+    stack_rm_parser.set_defaults(func=stack.remove)
+
     # ========================================================================
     # tt config - Configuration management
     # ========================================================================
     config_parser = subparsers.add_parser(
         'config',
         help='Manage configuration',
+        epilog='''Examples:
+  tt config ls                           # List all configuration
+  tt config get server.default_port      # Get specific value
+  tt config set server.default_port 8001 # Set configuration value
+  tt config reset                        # Reset to defaults
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     config_subparsers = config_parser.add_subparsers(
         dest='config_command',
         help='Configuration commands',
         required=True,
+        parser_class=SmartArgumentParser,
     )
 
     # tt config get
@@ -948,7 +1322,7 @@ def create_parser():
     )
     config_set_parser.set_defaults(func=config.set)
 
-    # tt config list
+    # tt config list (and alias: tt config ls)
     config_list_parser = config_subparsers.add_parser(
         'list',
         help='List all configuration',
@@ -964,6 +1338,23 @@ def create_parser():
         help='Path to config file',
     )
     config_list_parser.set_defaults(func=config.list_config)
+
+    # tt config ls (alias for list)
+    config_ls_parser = config_subparsers.add_parser(
+        'ls',
+        help='List all configuration (alias for list)',
+    )
+    config_ls_parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output as JSON',
+    )
+    config_ls_parser.add_argument(
+        '--config-file',
+        dest='config_file',
+        help='Path to config file',
+    )
+    config_ls_parser.set_defaults(func=config.list_config)
 
     # tt config reset
     config_reset_parser = config_subparsers.add_parser(
@@ -990,6 +1381,11 @@ def create_parser():
         help='Output as JSON',
     )
     status_parser.set_defaults(func=status.status)
+
+    # ========================================================================
+    # tt doctor - System diagnostics
+    # ========================================================================
+    doctor.add_doctor_parser(subparsers)
 
     return parser
 

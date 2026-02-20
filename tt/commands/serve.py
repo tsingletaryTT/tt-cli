@@ -148,7 +148,7 @@ def get_pid_file(model_name: str, pid_dir: Optional[Path] = None, device_id: Opt
     return pid_dir / f"{normalized_name}.pid"
 
 
-def write_pid_file(model_name: str, pid: int, port: int, pid_dir: Optional[Path] = None, device_id: Optional[int] = None) -> None:
+def write_pid_file(model_name: str, pid: int, port: int, pid_dir: Optional[Path] = None, device_id: Optional[int] = None, chips: Optional[str] = None) -> None:
     """
     Write PID file for running server.
 
@@ -158,16 +158,22 @@ def write_pid_file(model_name: str, pid: int, port: int, pid_dir: Optional[Path]
         port: Server port
         pid_dir: Directory for PID files
         device_id: Device ID (for single-device instances)
+        chips: Chip configuration (e.g., "0,1,2,3" or "all")
     """
+    import time
+
     pid_file = get_pid_file(model_name, pid_dir, device_id)
 
     data = {
         'pid': pid,
         'port': port,
         'model': model_name,
+        'start_time': time.time(),  # For uptime calculation
     }
     if device_id is not None:
         data['device_id'] = device_id
+    if chips is not None:
+        data['chips'] = chips
 
     pid_file.write_text(json.dumps(data, indent=2))
 
@@ -490,6 +496,13 @@ def start(args: argparse.Namespace) -> int:
     print(f"  TT_METAL_HOME: {env.get('TT_METAL_HOME', 'not set')}")
     print(f"  PYTHONPATH: {env.get('PYTHONPATH', 'not set')}")
 
+    # Determine chips for PID file tracking
+    if device_id is not None:
+        chips = str(device_id)
+    else:
+        # Multi-device - list all chips
+        chips = ','.join(str(i) for i in range(device_count))
+
     # Start server
     try:
         if args.detach:
@@ -514,7 +527,7 @@ def start(args: argparse.Namespace) -> int:
                 )
 
             # Write PID file
-            write_pid_file(args.model, process.pid, port, pid_dir, device_id)
+            write_pid_file(args.model, process.pid, port, pid_dir, device_id, chips)
 
             print(f"✓ Server started successfully")
             print(f"  PID: {process.pid}")
@@ -531,7 +544,7 @@ def start(args: argparse.Namespace) -> int:
             process = subprocess.Popen(cmd, env=env)
 
             # Write PID file
-            write_pid_file(args.model, process.pid, port, pid_dir, device_id)
+            write_pid_file(args.model, process.pid, port, pid_dir, device_id, chips)
 
             try:
                 process.wait()

@@ -112,6 +112,45 @@ def run_command(args):
     print(f"✓ Hardware: {device_count}x {device_type}")
     if mesh_device:
         print(f"  MESH_DEVICE: {mesh_device}")
+
+    # Handle --chips flag for explicit chip selection
+    selected_chips = None
+    chips_display = None
+
+    if hasattr(args, 'chips') and args.chips:
+        chips_arg = args.chips.strip().lower()
+
+        if chips_arg == 'all':
+            # Use all available chips
+            selected_chips = list(range(device_count))
+            chips_display = f"0-{device_count-1} (all)"
+        else:
+            # Parse comma-separated chip IDs
+            try:
+                chip_ids = [int(x.strip()) for x in chips_arg.split(',')]
+
+                # Validate chip IDs
+                for chip_id in chip_ids:
+                    if chip_id < 0 or chip_id >= device_count:
+                        print(f"❌ Invalid chip ID: {chip_id}")
+                        print(f"   Available chips: 0-{device_count-1}")
+                        sys.exit(1)
+
+                selected_chips = chip_ids
+                chips_display = ','.join(str(x) for x in chip_ids)
+
+            except ValueError:
+                print(f"❌ Invalid --chips format: {args.chips}")
+                print(f"   Use 'all', '0,1,2,3', or '0'")
+                sys.exit(1)
+
+        print(f"  Chips: {chips_display}")
+    else:
+        # Default: use all chips
+        selected_chips = list(range(device_count))
+        chips_display = f"0-{device_count-1} (all, default)"
+        print(f"  Chips: {chips_display}")
+
     print()
 
     # Step 2: Try to fetch model spec from tt-inference-server
@@ -311,8 +350,36 @@ def run_command(args):
         if verbose:
             print(f"  Setting {key}={value}")
 
-    # Set MESH_DEVICE
-    env['MESH_DEVICE'] = final_mesh_device
+    # Apply chip selection to environment
+    if len(selected_chips) == 1:
+        # Single chip mode
+        chip_id = selected_chips[0]
+        env['TT_VISIBLE_DEVICES'] = str(chip_id)
+
+        # Use single-chip mesh device (P150 instead of P150X4)
+        if final_mesh_device and 'X' in final_mesh_device:
+            # Extract base device type (P150X4 -> P150)
+            base_device = final_mesh_device.split('X')[0]
+            env['MESH_DEVICE'] = base_device
+            if verbose:
+                print(f"  Single chip mode: Using {base_device} (chip {chip_id})")
+        else:
+            env['MESH_DEVICE'] = final_mesh_device
+    elif len(selected_chips) < device_count:
+        # Multi-chip but not all chips
+        env['TT_VISIBLE_DEVICES'] = ','.join(str(x) for x in selected_chips)
+        # Adjust MESH_DEVICE based on number of chips
+        # e.g., 2 chips -> P150X2
+        if final_mesh_device and 'X' in final_mesh_device:
+            base_device = final_mesh_device.split('X')[0]
+            env['MESH_DEVICE'] = f"{base_device}X{len(selected_chips)}"
+            if verbose:
+                print(f"  Multi-chip mode: Using {len(selected_chips)} chips")
+        else:
+            env['MESH_DEVICE'] = final_mesh_device
+    else:
+        # All chips (default behavior)
+        env['MESH_DEVICE'] = final_mesh_device
 
     # Set ARCH_NAME if Blackhole
     if hardware.is_blackhole():
@@ -414,6 +481,12 @@ def add_run_parser(subparsers):
         '--mesh-device',
         type=str,
         help='Override MESH_DEVICE (e.g., P150, P150X4, N300)',
+    )
+
+    run_parser.add_argument(
+        '--chips',
+        type=str,
+        help='Specify which chips to use: "all", "0,1,2,3", or "0" (default: all)',
     )
 
     run_parser.set_defaults(func=run_command)

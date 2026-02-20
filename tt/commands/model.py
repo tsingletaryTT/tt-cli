@@ -893,3 +893,217 @@ def spec_info(args):
     print()
 
     return 0
+
+
+# ============================================================================
+# Cache Management Commands
+# ============================================================================
+
+def cache_list(args: argparse.Namespace) -> int:
+    """
+    List TT cache files for a model.
+
+    Args:
+        args: Command arguments with model name
+
+    Returns:
+        Exit code (0 = success)
+    """
+    model_name = args.model
+    models_dir = Path(args.models_dir) if hasattr(args, 'models_dir') and args.models_dir else DEFAULT_MODELS_DIR
+
+    # Find model
+    model_path = find_model_path(model_name, models_dir)
+
+    if not model_path:
+        print(f"❌ Model not found: {model_name}")
+        print()
+        print(f"Searched in: {models_dir}")
+        return 1
+
+    print(f"Model: {model_path.name}")
+    print(f"Path: {model_path}")
+    print()
+
+    # Detect caches
+    device_dirs = ['P150x4', 'T3K', 'P150x8', 'TG', 'P150', 'N150', 'N300', 'P300C']
+    found_caches = []
+
+    for device_name in device_dirs:
+        device_cache = model_path / device_name / 'tensor_cache_bfp8'
+        if device_cache.exists() and device_cache.is_dir():
+            tensor_files = list(device_cache.glob('*.tensorbin'))
+            if tensor_files:
+                total_bytes = sum(f.stat().st_size for f in tensor_files)
+                size_mb = int(total_bytes / (1024 * 1024))
+
+                found_caches.append({
+                    'device': device_name,
+                    'path': device_cache,
+                    'files': len(tensor_files),
+                    'size_mb': size_mb,
+                })
+
+    if not found_caches:
+        print("No TT caches found")
+        print()
+        print("To build a cache:")
+        print(f"  tt model cache build {model_name}")
+        return 0
+
+    print("TT Caches:")
+    print()
+    print(f"{'DEVICE':<10}  {'FILES':<8}  {'SIZE':<10}  {'PATH'}")
+    print("-" * 80)
+
+    for cache in found_caches:
+        print(f"{cache['device']:<10}  {cache['files']:<8}  {cache['size_mb']}MB{' ':<6}  {cache['path']}")
+
+    print()
+    print(f"Total: {len(found_caches)} cache(s)")
+
+    return 0
+
+
+def cache_clear(args: argparse.Namespace) -> int:
+    """
+    Clear TT cache for a model.
+
+    Args:
+        args: Command arguments with model name and optional device
+
+    Returns:
+        Exit code (0 = success)
+    """
+    import shutil
+
+    model_name = args.model
+    models_dir = Path(args.models_dir) if hasattr(args, 'models_dir') and args.models_dir else DEFAULT_MODELS_DIR
+    device_filter = args.device if hasattr(args, 'device') and args.device else None
+
+    # Find model
+    model_path = find_model_path(model_name, models_dir)
+
+    if not model_path:
+        print(f"❌ Model not found: {model_name}")
+        return 1
+
+    print(f"Model: {model_path.name}")
+    print()
+
+    # Find caches to clear
+    device_dirs = ['P150x4', 'T3K', 'P150x8', 'TG', 'P150', 'N150', 'N300', 'P300C']
+    to_clear = []
+
+    for device_name in device_dirs:
+        if device_filter and device_name != device_filter:
+            continue
+
+        device_cache = model_path / device_name / 'tensor_cache_bfp8'
+        if device_cache.exists() and device_cache.is_dir():
+            tensor_files = list(device_cache.glob('*.tensorbin'))
+            if tensor_files:
+                total_bytes = sum(f.stat().st_size for f in tensor_files)
+                size_mb = int(total_bytes / (1024 * 1024))
+
+                to_clear.append({
+                    'device': device_name,
+                    'path': device_cache,
+                    'files': len(tensor_files),
+                    'size_mb': size_mb,
+                })
+
+    if not to_clear:
+        if device_filter:
+            print(f"No TT cache found for device: {device_filter}")
+        else:
+            print("No TT caches found")
+        return 0
+
+    # Show what will be cleared
+    print("Caches to clear:")
+    for cache in to_clear:
+        print(f"  {cache['device']}: {cache['files']} files, {cache['size_mb']}MB")
+    print()
+
+    total_size = sum(c['size_mb'] for c in to_clear)
+    print(f"⚠️  This will delete {total_size}MB of cached data")
+
+    # Confirm unless --yes flag
+    if not (hasattr(args, 'yes') and args.yes):
+        response = input("Confirm? [y/N]: ")
+        if response.lower() != 'y':
+            print("Cancelled")
+            return 0
+
+    print()
+
+    # Clear caches
+    for cache in to_clear:
+        print(f"Clearing {cache['device']}...")
+        try:
+            shutil.rmtree(cache['path'])
+            print(f"✓ Cleared {cache['device']}")
+        except Exception as e:
+            print(f"❌ Error clearing {cache['device']}: {e}")
+
+    print()
+    print(f"✓ Cleared {len(to_clear)} cache(s)")
+
+    return 0
+
+
+def cache_build(args: argparse.Namespace) -> int:
+    """
+    Build TT cache for a model.
+
+    Args:
+        args: Command arguments with model name
+
+    Returns:
+        Exit code (0 = success)
+    """
+    model_name = args.model
+    models_dir = Path(args.models_dir) if hasattr(args, 'models_dir') and args.models_dir else DEFAULT_MODELS_DIR
+
+    # Find model
+    model_path = find_model_path(model_name, models_dir)
+
+    if not model_path:
+        print(f"❌ Model not found: {model_name}")
+        return 1
+
+    print(f"Model: {model_path.name}")
+    print(f"Path: {model_path}")
+    print()
+
+    # Check if cache already exists
+    cache_info = detect_tt_cache(model_path)
+    if cache_info['has_cache']:
+        print(f"⚠️  Cache already exists: {cache_info['device']}")
+        print(f"   {cache_info['tensor_count']} files, {cache_info['cache_size_mb']}MB")
+        print()
+
+        if not (hasattr(args, 'force') and args.force):
+            print("Use --force to rebuild")
+            return 1
+
+        print("Rebuilding cache...")
+        print()
+
+    print("❌ Cache building is not yet implemented")
+    print()
+    print("TT cache building requires:")
+    print("  1. Model loaded in TT-Metal/vLLM")
+    print("  2. First inference run to generate cache")
+    print("  3. Cache is automatically saved to model directory")
+    print()
+    print("To build a cache:")
+    print(f"  1. Run: tt run {model_name}")
+    print(f"  2. Wait for first inference to complete")
+    print(f"  3. Cache will be saved automatically")
+    print()
+    print("Then check with:")
+    print(f"  tt model cache ls {model_name}")
+
+    return 1
