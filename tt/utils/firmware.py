@@ -530,7 +530,7 @@ def flash_firmware(
         bundle_path: Path to firmware bundle (.fwbundle file)
         force: Force update ROM (--force flag)
         no_reset: Do not reset devices after flash (--no-reset flag)
-        allow_downgrades: Allow major version downgrades (--allow-downgrades flag)
+        allow_downgrades: Allow major version downgrades (--allow-major-downgrades flag)
 
     Returns:
         Exit code (0 = success, non-zero = error)
@@ -557,7 +557,7 @@ def flash_firmware(
         cmd.append('--no-reset')
 
     if allow_downgrades:
-        cmd.append('--allow-downgrades')
+        cmd.append('--allow-major-downgrades')
 
     # Execute command
     print(f"Flashing firmware: {bundle_path}")

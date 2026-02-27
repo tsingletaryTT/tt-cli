@@ -347,15 +347,18 @@ def flash(args):
                 print()
 
             # Check for downgrade
+            is_downgrade = False
             if current_version != "unknown" and version != current_version:
                 comparison = firmware.compare_versions(version, current_version)
                 if comparison < 0:
+                    is_downgrade = True
                     print(f"⚠ Warning: This is a downgrade from {current_version} to {version}")
                     print()
 
         else:
             print(f"Target firmware: {bundle_path.name}")
             print()
+            is_downgrade = False  # Can't determine downgrade without version
 
         # Show current vs target
         if current_version != "unknown":
@@ -369,6 +372,41 @@ def flash(args):
 
     else:
         print("⚠ Warning: Could not detect hardware")
+        print()
+        is_downgrade = False
+
+    # Interactive downgrade handling
+    if is_downgrade and not args.allow_downgrades and not args.yes:
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print("⚠  FIRMWARE DOWNGRADE DETECTED")
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print()
+        print(f"  Current version: {current_version}")
+        print(f"  Target version:  {version}")
+        print()
+        print("Firmware downgrades may cause compatibility issues or unexpected behavior.")
+        print("This operation will override tt-flash safety checks.")
+        print()
+        print("Options:")
+        print("  [y] Yes, proceed with downgrade (adds --allow-major-downgrades)")
+        print("  [n] No, cancel operation (default)")
+        print()
+
+        response = input("Proceed with downgrade? [y/N]: ").strip().lower()
+        print()
+
+        if response not in ['y', 'yes']:
+            print("Cancelled - downgrade not performed")
+            print()
+            print("To flash this version, either:")
+            print(f"  • Use a newer firmware version (try: tt firmware list --recommended)")
+            print(f"  • Add --allow-downgrades flag to bypass this check")
+            print()
+            return 0
+
+        # User confirmed downgrade - enable the flag
+        args.allow_downgrades = True
+        print("✓ Downgrade confirmed - proceeding with --allow-major-downgrades")
         print()
 
     # Confirmation prompt (unless --yes flag)

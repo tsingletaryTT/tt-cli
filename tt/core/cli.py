@@ -9,7 +9,7 @@ import argparse
 from pathlib import Path
 
 # Import command handlers
-from tt.commands import serve, env, device, firmware, status, model, workflow, config, metal, stack, run, ps, logs, chat, doctor
+from tt.commands import serve, env, device, firmware, status, model, workflow, config, metal, stack, run, ps, logs, chat, doctor, xla, forge
 from tt.utils.similarity import find_similar_command
 
 
@@ -595,6 +595,110 @@ Examples:
     metal_setup_parser.set_defaults(func=metal.setup)
 
     # ========================================================================
+    # tt xla - XLA environment management
+    # ========================================================================
+    xla_parser = subparsers.add_parser(
+        'xla',
+        help='Manage TT-XLA environment',
+        description='Commands for torch-xla and JAX workloads',
+        epilog='''Examples:
+  tt xla env                             # Show XLA environment info
+  tt xla test                            # Test XLA installation
+  tt xla devices                         # Show available XLA devices
+  tt xla run script.py                   # Run script with XLA environment
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    xla_subparsers = xla_parser.add_subparsers(
+        dest='xla_command',
+        help='XLA commands',
+        required=True,
+        parser_class=SmartArgumentParser,
+    )
+
+    # tt xla env
+    xla_env_parser = xla_subparsers.add_parser(
+        'env',
+        help='Show XLA environment info',
+        description='Display XLA environment configuration and status',
+    )
+    xla_env_parser.set_defaults(func=xla.env)
+
+    # tt xla run
+    xla_run_parser = xla_subparsers.add_parser(
+        'run',
+        help='Run script with XLA environment',
+        description='Execute a Python script with XLA environment activated',
+    )
+    xla_run_parser.add_argument(
+        'script',
+        help='Python script to run',
+    )
+    xla_run_parser.add_argument(
+        'script_args',
+        nargs='*',
+        help='Arguments to pass to script',
+    )
+    xla_run_parser.set_defaults(func=xla.run)
+
+    # tt xla test
+    xla_test_parser = xla_subparsers.add_parser(
+        'test',
+        help='Test XLA installation',
+        description='Run tests to verify XLA installation and device access',
+    )
+    xla_test_parser.set_defaults(func=xla.test)
+
+    # tt xla devices
+    xla_devices_parser = xla_subparsers.add_parser(
+        'devices',
+        help='Show XLA devices',
+        description='List available XLA devices',
+    )
+    xla_devices_parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output as JSON',
+    )
+    xla_devices_parser.set_defaults(func=xla.devices)
+
+    # ========================================================================
+    # tt forge - Forge compiler management
+    # ========================================================================
+    forge_parser = subparsers.add_parser(
+        'forge',
+        help='Manage TT-Forge compiler',
+        description='Commands for Forge model compilation',
+        epilog='''Examples:
+  tt forge env                           # Show Forge environment info
+  tt forge test                          # Test Forge installation
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    forge_subparsers = forge_parser.add_subparsers(
+        dest='forge_command',
+        help='Forge commands',
+        required=True,
+        parser_class=SmartArgumentParser,
+    )
+
+    # tt forge env
+    forge_env_parser = forge_subparsers.add_parser(
+        'env',
+        help='Show Forge environment info',
+        description='Display Forge environment configuration and status',
+    )
+    forge_env_parser.set_defaults(func=forge.env)
+
+    # tt forge test
+    forge_test_parser = forge_subparsers.add_parser(
+        'test',
+        help='Test Forge installation',
+        description='Run tests to verify Forge installation',
+    )
+    forge_test_parser.set_defaults(func=forge.test)
+
+    # ========================================================================
     # tt device - Device management
     # ========================================================================
     device_parser = subparsers.add_parser(
@@ -729,6 +833,7 @@ Examples:
     flash_fw_parser = firmware_subparsers.add_parser(
         'flash',
         help='Flash firmware to devices',
+        description='Flash firmware to devices. Downgrades require interactive confirmation or --allow-downgrades flag.',
     )
     flash_fw_parser.add_argument(
         'version_or_path',
@@ -749,7 +854,7 @@ Examples:
         '--allow-downgrades',
         action='store_true',
         dest='allow_downgrades',
-        help='Allow major version downgrades',
+        help='Allow firmware downgrades (bypasses tt-flash safety checks)',
     )
     flash_fw_parser.add_argument(
         '--yes',
