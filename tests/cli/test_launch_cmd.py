@@ -108,6 +108,31 @@ def test_configures_and_hands_over(runner, served, fake_client, execed):
 
 
 @pytest.mark.fakes_only
+def test_opencode_2_is_handed_the_model_by_environment_not_by_flag(
+    runner, served, fake_client, monkeypatch
+):
+    # The real OpenCode 2 exits 1 and prints usage for a top-level --model, so a launch that
+    # still passed it never reached the TUI.
+    fake_client.write_text('#!/bin/sh\n[ "$1" = "--version" ] && echo "opencode v2.3.2"\nexit 0\n')
+    seen: list[tuple[list[str], dict]] = []
+
+    def fake_execvpe(file, argv, env):
+        seen.append((list(argv), dict(env)))
+        raise SystemExit(0)
+
+    monkeypatch.setattr("tenstorrent.tools.runner.os.execvpe", fake_execvpe)
+    base = served("Qwen/Qwen3-32B")
+    result = runner.invoke(app, ["launch", "opencode", "--url", base])
+    assert result.exit_code == 0, result.output
+    ((argv, env),) = seen
+    assert argv == [str(fake_client)]
+    assert json.loads(env["OPENCODE_CONFIG_CONTENT"]) == {"model": "tenstorrent/Qwen/Qwen3-32B"}
+    # The provider block still goes in the user's file; only the model choice is per run.
+    assert json.loads(opencode_config().read_text())["provider"]["tenstorrent"]["options"]["baseURL"] == base
+    assert "model" not in json.loads(opencode_config().read_text())
+
+
+@pytest.mark.fakes_only
 def test_dry_run_changes_nothing_and_needs_no_client(runner, served, execed):
     base = served("Qwen/Qwen3-32B")
     result = runner.invoke(app, ["launch", "opencode", "--url", base, "--dry-run"])

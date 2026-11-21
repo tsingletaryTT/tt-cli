@@ -5,9 +5,12 @@
 
 from __future__ import annotations
 
+import json
+import re
 from copy import deepcopy
 from pathlib import Path
 
+from ...errors import TTError
 from ..base import (
     ConfigChange,
     LaunchEnv,
@@ -27,6 +30,13 @@ PROVIDER_KEY = "tenstorrent"
 _SCHEMA = "https://opencode.ai/config.json"
 # The provider schema wants a key; models tt serves are unauthenticated and ignore it.
 _PLACEHOLDER_KEY = "tt-local"
+# OpenCode 2 dropped the top-level `--model` flag (it survives on `opencode run`), and the
+# model is now chosen by config. Inline config in this variable applies to one run, wins
+# over a `model` key in the user's own file, and leaves that file alone.
+_INLINE_CONFIG_ENV = "OPENCODE_CONFIG_CONTENT"
+_VERSION_TIMEOUT_S = 10
+# First `N.N.N` in the output: OpenCode 1 prints `1.19.6`, OpenCode 2 prints `opencode v2.3.2`.
+_VERSION_RE = re.compile(r"(\d+)\.\d+\.\d+")
 
 
 class OpenCode:
@@ -51,6 +61,7 @@ class OpenCode:
         runner,
     ) -> Preparation:
         path = self.config_path()
+        major = self._major_version(executable, runner)
         doc, created = read_json_config(path)
         # Snapshot before mutating: setdefault hands back the live dict, and the
         # comparison below decides whether the user is asked at all.
@@ -80,7 +91,8 @@ class OpenCode:
             consent=None
             if before == provider
             else config_consent(path, f"provider.{PROVIDER_KEY}", existing=before),
-            steps=[self._argv(executable or self.binaries[0], model)],
+            steps=[self._argv(executable or self.binaries[0], model, major)],
+            env=self._env(model, major),
         )
 
     def apply(self, model: RunningModel, prep: Preparation, env: LaunchEnv) -> None:
@@ -88,7 +100,9 @@ class OpenCode:
         write_json_config(prep.config.path, prep.config.document)
 
     def handoff(self, model: RunningModel, prep: Preparation, env: LaunchEnv) -> None:
-        env.runner.exec_tty(self._argv(env.executable, model))
+        # What plan() decided (flag or environment, by version), at the path the client was found.
+        argv = [env.executable, *prep.steps[0][1:]]
+        env.runner.exec_tty(argv, env=prep.env)
 
     def disconnect_plan(self, executable: str | None, runner) -> str | None:
         path = self.config_path()
@@ -109,8 +123,40 @@ class OpenCode:
             }
         return entry
 
-    def _argv(self, executable: str, model: RunningModel) -> list[str]:
+    def _major_version(self, executable: str | None, runner) -> int | None:
+        """The client's major version, or None when it cannot be read.
+
+        Unreadable means the old behavior (`--model`), so a dry run before the client is
+        installed, a client that prints nothing, and a failing `--version` all plan what
+        earlier releases planned.
+        """
+        if not executable or runner is None:
+            return None
+        try:
+            result = runner.capture(
+                [executable, "--version"], timeout=_VERSION_TIMEOUT_S, check=False
+            )
+        except TTError:
+            return None
+        if result.returncode != 0:
+            return None
+        match = _VERSION_RE.search(result.stdout or "")
+        return int(match.group(1)) if match else None
+
+    def _model_ref(self, model: RunningModel) -> str:
         # served_id is whatever the API expects, so a repo-shaped id makes a ref
         # with two slashes (tenstorrent/Qwen/Qwen3-32B). Correctness with the
         # server wins: a shortened key would be sent verbatim and 404.
-        return [executable, "--model", f"{PROVIDER_KEY}/{model.served_id}"]
+        return f"{PROVIDER_KEY}/{model.served_id}"
+
+    def _argv(
+        self, executable: str, model: RunningModel, major: int | None
+    ) -> list[str]:
+        if major is not None and major >= 2:
+            return [executable]
+        return [executable, "--model", self._model_ref(model)]
+
+    def _env(self, model: RunningModel, major: int | None) -> dict:
+        if major is None or major < 2:
+            return {}
+        return {_INLINE_CONFIG_ENV: json.dumps({"model": self._model_ref(model)})}

@@ -300,6 +300,96 @@ def test_opencode_sizes_output_from_the_served_window(tmp_path, monkeypatch):
     assert prep.config.block["models"]["m"]["limit"] == {"context": 262144, "output": 65536}
 
 
+class _OpenCodeVersion:
+    """A runner whose `opencode --version` prints `out` (or raises `error`)."""
+
+    def __init__(self, out="", error=None, returncode=0):
+        self.out, self.error, self.returncode = out, error, returncode
+        self.calls: list[tuple[list[str], dict]] = []
+
+    def capture(self, argv, **kwargs):
+        self.calls.append((list(argv), kwargs))
+        if self.error:
+            raise self.error
+        return CaptureResult(returncode=self.returncode, stdout=self.out, stderr="")
+
+
+def _opencode_plan(tmp_path, monkeypatch, runner, executable="/usr/bin/opencode"):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    model = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
+    return LAUNCHERS["opencode"].plan(model, LaunchOptions(), executable=executable, runner=runner)
+
+
+@pytest.mark.parametrize("printed", ["opencode v2.3.2", "2.0.0", "opencode v2.0.0-beta.1\n", "v10.1.0"])
+def test_opencode_2_and_later_take_the_model_from_the_environment(tmp_path, monkeypatch, printed):
+    # OpenCode 2 has no top-level --model (only `opencode run --model`), so a launch that
+    # passes it prints the usage text and exits 1. The model goes in as inline config for
+    # this run only, which also outranks a `model` key already in the user's own config.
+    prep = _opencode_plan(tmp_path, monkeypatch, _OpenCodeVersion(printed))
+    assert prep.steps == [["/usr/bin/opencode"]]
+    assert list(prep.env) == ["OPENCODE_CONFIG_CONTENT"]
+    assert json.loads(prep.env["OPENCODE_CONFIG_CONTENT"]) == {
+        "model": "tenstorrent/Qwen/Qwen3-32B"
+    }
+
+
+@pytest.mark.parametrize("printed", ["1.19.6", "opencode 1.4.0", "0.9.9"])
+def test_opencode_before_2_keeps_the_model_flag(tmp_path, monkeypatch, printed):
+    prep = _opencode_plan(tmp_path, monkeypatch, _OpenCodeVersion(printed))
+    assert prep.steps == [["/usr/bin/opencode", "--model", "tenstorrent/Qwen/Qwen3-32B"]]
+    assert prep.env == {}
+
+
+@pytest.mark.parametrize(
+    "runner,executable",
+    [
+        (None, None),  # a dry run before the client is installed
+        (None, "/usr/bin/opencode"),
+        (_OpenCodeVersion(""), "/usr/bin/opencode"),  # prints nothing
+        (_OpenCodeVersion("no version here"), "/usr/bin/opencode"),
+        (_OpenCodeVersion("2.3.2", returncode=1), "/usr/bin/opencode"),  # a failed call
+        (_OpenCodeVersion(error=TTError("gone")), "/usr/bin/opencode"),
+    ],
+)
+def test_opencode_with_no_readable_version_keeps_the_model_flag(
+    tmp_path, monkeypatch, runner, executable
+):
+    prep = _opencode_plan(tmp_path, monkeypatch, runner, executable)
+    assert prep.steps == [[executable or "opencode", "--model", "tenstorrent/Qwen/Qwen3-32B"]]
+    assert prep.env == {}
+
+
+def test_opencode_asks_for_the_version_without_failing_the_launch_on_it(tmp_path, monkeypatch):
+    runner = _OpenCodeVersion("opencode v2.3.2")
+    _opencode_plan(tmp_path, monkeypatch, runner)
+    ((argv, kwargs),) = runner.calls
+    assert argv == ["/usr/bin/opencode", "--version"]
+    assert kwargs["check"] is False and kwargs["timeout"]  # bounded, and never raises on a bad exit
+
+
+def test_opencode_handoff_runs_what_was_planned_with_the_planned_environment(tmp_path, monkeypatch):
+    class Recorder:
+        def __init__(self):
+            self.exec = None
+
+        def exec_tty(self, argv, *, env=None):
+            self.exec = (list(argv), dict(env or {}))
+
+    launcher = LAUNCHERS["opencode"]
+    model = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
+    for printed, want_argv in (
+        ("opencode v2.3.2", ["/opt/oc/opencode"]),
+        ("1.19.6", ["/opt/oc/opencode", "--model", "tenstorrent/Qwen/Qwen3-32B"]),
+    ):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        prep = launcher.plan(
+            model, LaunchOptions(), executable="/opt/oc/opencode", runner=_OpenCodeVersion(printed)
+        )
+        rec = Recorder()
+        launcher.handoff(model, prep, LaunchEnv("/opt/oc/opencode", rec, None))
+        assert rec.exec == (want_argv, prep.env)
+
+
 def test_openwebui_rewrites_a_loopback_endpoint_for_the_container():
     # localhost inside the container is Open WebUI itself, not the model server.
     assert (
